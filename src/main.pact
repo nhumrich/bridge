@@ -23,6 +23,8 @@ fn usage() {
     io.println("  untag <id> <tag> [tag...]               Remove tags")
     io.println("  tags                                    List all tags")
     io.println("  stats                                   Show task statistics")
+    io.println("  install                                 Install Claude Code commands")
+    io.println("  uninstall                               Remove Claude Code commands")
 }
 
 fn get_flag(args: List[Str], flag: Str, alt: Str) -> Bool {
@@ -200,6 +202,10 @@ fn main() {
         cmd_tags()
     } else if cmd == "stats" {
         cmd_stats()
+    } else if cmd == "install" {
+        cmd_install()
+    } else if cmd == "uninstall" {
+        cmd_uninstall()
     } else if cmd == "help" || cmd == "--help" || cmd == "-h" {
         usage()
     } else {
