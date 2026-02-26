@@ -1,0 +1,57 @@
+pub fn short_id(id: Str) -> Str {
+    if id.len() > 8 {
+        return id.slice(0, 8)
+    }
+    id
+}
+
+pub fn format_priority(p: Int) -> Str {
+    if p == 0 { return "P0" }
+    if p == 1 { return "P1" }
+    if p == 2 { return "P2" }
+    if p == 3 { return "P3" }
+    "P4"
+}
+
+pub fn format_status(status: Str) -> Str {
+    if status == "open" { return "[ ]" }
+    if status == "in_progress" { return "[~]" }
+    if status == "done" { return "[x]" }
+    "[-]"
+}
+
+pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: Str) -> Str {
+    let sid = short_id(id)
+    let pstr = format_priority(priority)
+    let sstr = format_status(status)
+    let mut tag_part = ""
+    if !tags.is_empty() { tag_part = " [{tags}]" }
+    "{sstr} {sid}  {pstr}  {title}{tag_part}"
+}
+
+pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, priority: Int, created_at: Str, updated_at: Str, closed_at: Str, tags: Str, blocks: Str, blocked_by: Str) -> Str {
+    let mut lines: List[Str] = []
+    lines.push("Task: {short_id(id)}")
+    lines.push("  Full ID:  {id}")
+    lines.push("  Title:    {title}")
+    lines.push("  Status:   {status}")
+    lines.push("  Priority: {format_priority(priority)}")
+    if !description.is_empty() {
+        lines.push("  Desc:     {description}")
+    }
+    if !tags.is_empty() {
+        lines.push("  Tags:     {tags}")
+    }
+    if !blocked_by.is_empty() {
+        lines.push("  Blocked:  {blocked_by}")
+    }
+    if !blocks.is_empty() {
+        lines.push("  Blocks:   {blocks}")
+    }
+    lines.push("  Created:  {created_at}")
+    lines.push("  Updated:  {updated_at}")
+    if !closed_at.is_empty() {
+        lines.push("  Closed:   {closed_at}")
+    }
+    lines.join("\n")
+}

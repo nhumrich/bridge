@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pact llms:*)",
+      "Bash(pact run:*)",
+      "Bash(pact check:*)",
+      "Bash(cat:*)"
+    ]
+  }
+}

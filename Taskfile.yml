@@ -1,0 +1,51 @@
+version: '3'
+
+vars:
+  SRC: src/main.pact
+  BIN: build/main
+  INSTALL_PATH: ~/.local/bin/br
+
+tasks:
+  build:
+    desc: Build the bridge binary
+    cmds:
+      - pact build {{.SRC}}
+    sources:
+      - src/*.pact
+    generates:
+      - "{{.BIN}}"
+
+  install:
+    desc: Build and install br to ~/.local/bin/
+    deps: [build]
+    cmds:
+      - cp {{.BIN}} {{.INSTALL_PATH}}
+      - chmod +x {{.INSTALL_PATH}}
+      - echo "Installed br to {{.INSTALL_PATH}}"
+
+  check:
+    desc: Typecheck all source files
+    cmds:
+      - pact check {{.SRC}}
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -f {{.BIN}}
+
+  test:
+    desc: Run pact tests
+    cmds:
+      - pact test
+
+  ci:
+    desc: Run all checks (typecheck + build)
+    cmds:
+      - task: check
+      - task: build
+
+  dev:
+    desc: Build and run with args (usage -- task dev -- add "my task")
+    deps: [build]
+    cmds:
+      - "{{.BIN}} {{.CLI_ARGS}}"
