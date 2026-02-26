@@ -72,3 +72,15 @@ Tracking every issue encountered while building Bridge, for feeding back to Pact
 - **Issue**: `stack.pop() ?? ""` generates invalid C — `pact_Option_str` initialized to `0`
 - **Workaround**: `stack.get(stack.len() - 1)` then `stack.pop()` (ignore return)
 - **Severity**: Medium — `??` operator not working with `Option` return from `pop()`
+
+## 11. `List.get()` returns `Option[T]` in v0.6 (BREAKING)
+- **Change**: `List.get(idx)` now returns `Option[T]` instead of `T`
+- **Impact**: ~30+ call sites need `?? default_value` suffix
+- **Status**: Documented breaking change, all call sites updated
+- **Severity**: High — silent breakage, no compile error without `??`
+
+## v0.6 Status Update
+- Issues 1-10 are **confirmed still present** in Pact v0.6
+- `process_run()` docs now claim single-string signature, but **reality unchanged** — still requires 2 args (program + args list)
+- New `const` keyword available for module-level constants
+- `List.get()` → `Option[T]` is the only breaking change encountered

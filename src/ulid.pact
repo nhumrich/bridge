@@ -1,4 +1,4 @@
-let CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
+const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
 
 fn hex_to_int(hex: Str) -> Int {
     let mut value = 0

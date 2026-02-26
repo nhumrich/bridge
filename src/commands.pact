@@ -5,7 +5,7 @@ import display
 fn list_contains(items: List[Str], target: Str) -> Bool {
     let mut i = 0
     while i < items.len() {
-        if items.get(i) == target {
+        if (items.get(i) ?? "") == target {
             return true
         }
         i = i + 1
@@ -283,7 +283,7 @@ fn has_cycle(from_id: Str, to_id: Str) -> Bool {
     let mut stack: List[Str] = [to_id]
 
     while stack.len() > 0 {
-        let current = stack.get(stack.len() - 1)
+        let current = stack.get(stack.len() - 1) ?? ""
         stack.pop()
         if current == from_id {
             return true

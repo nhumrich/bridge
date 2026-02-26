@@ -30,7 +30,7 @@ fn usage() {
 fn get_flag(args: List[Str], flag: Str, alt: Str) -> Bool {
     let mut i = 0
     while i < args.len() {
-        let a = args.get(i)
+        let a = args.get(i) ?? ""
         if a == flag || a == alt {
             return true
         }
@@ -42,9 +42,9 @@ fn get_flag(args: List[Str], flag: Str, alt: Str) -> Bool {
 fn get_option(args: List[Str], flag: Str, alt: Str) -> Str {
     let mut i = 0
     while i < args.len() - 1 {
-        let a = args.get(i)
+        let a = args.get(i) ?? ""
         if a == flag || a == alt {
-            return args.get(i + 1)
+            return args.get(i + 1) ?? ""
         }
         i = i + 1
     }
@@ -55,7 +55,7 @@ fn collect_rest(args: List[Str], start: Int) -> List[Str] {
     let mut result: List[Str] = []
     let mut i = start
     while i < args.len() {
-        result.push(args.get(i))
+        result.push(args.get(i) ?? "")
         i = i + 1
     }
     result
@@ -65,7 +65,7 @@ fn collect_non_flag_args(args: List[Str], start: Int) -> List[Str] {
     let mut result: List[Str] = []
     let mut i = start
     while i < args.len() {
-        let a = args.get(i)
+        let a = args.get(i) ?? ""
         if !a.starts_with("-") {
             result.push(a)
         }
@@ -83,7 +83,7 @@ fn main() {
         exit(0)
     }
 
-    let cmd = args.get(1)
+    let cmd = args.get(1) ?? ""
     let rest = collect_rest(args, 2)
     let json_mode = get_flag(rest, "--json", "-j")
 
@@ -92,7 +92,7 @@ fn main() {
             io.eprintln("Usage: br add <title> [-p N] [-t tag] [-d desc]")
             exit(1)
         }
-        let title = rest.get(0)
+        let title = rest.get(0) ?? ""
         let priority_str = get_option(rest, "-p", "-p")
         let mut priority = 2
         if !priority_str.is_empty() { priority = priority_str.to_int() }
@@ -101,8 +101,8 @@ fn main() {
         let mut tags: List[Str] = []
         let mut i = 0
         while i < rest.len() {
-            if rest.get(i) == "-t" && i + 1 < rest.len() {
-                tags.push(rest.get(i + 1))
+            if (rest.get(i) ?? "") == "-t" && i + 1 < rest.len() {
+                tags.push(rest.get(i + 1) ?? "")
             }
             i = i + 1
         }
@@ -120,13 +120,13 @@ fn main() {
             io.eprintln("Usage: br show <id>")
             exit(1)
         }
-        cmd_show(rest.get(0), json_mode)
+        cmd_show(rest.get(0) ?? "", json_mode)
     } else if cmd == "edit" {
         if rest.len() == 0 {
             io.eprintln("Usage: br edit <id> [--title T] [--desc D] [-p N] [-s status]")
             exit(1)
         }
-        let id = rest.get(0)
+        let id = rest.get(0) ?? ""
         let title = get_option(rest, "--title", "--title")
         let description = get_option(rest, "--desc", "--desc")
         let priority_str = get_option(rest, "-p", "-p")
@@ -139,43 +139,43 @@ fn main() {
             io.eprintln("Usage: br start <id>")
             exit(1)
         }
-        cmd_start(rest.get(0))
+        cmd_start(rest.get(0) ?? "")
     } else if cmd == "done" {
         if rest.len() == 0 {
             io.eprintln("Usage: br done <id>")
             exit(1)
         }
-        cmd_done(rest.get(0))
+        cmd_done(rest.get(0) ?? "")
     } else if cmd == "cancel" {
         if rest.len() == 0 {
             io.eprintln("Usage: br cancel <id>")
             exit(1)
         }
-        cmd_cancel(rest.get(0))
+        cmd_cancel(rest.get(0) ?? "")
     } else if cmd == "rm" {
         if rest.len() == 0 {
             io.eprintln("Usage: br rm <id>")
             exit(1)
         }
-        cmd_rm(rest.get(0))
+        cmd_rm(rest.get(0) ?? "")
     } else if cmd == "dep" {
         if rest.len() == 0 {
             io.eprintln("Usage: br dep <add|rm> <blocker> <blocked>")
             exit(1)
         }
-        let subcmd = rest.get(0)
+        let subcmd = rest.get(0) ?? ""
         if subcmd == "add" {
             if rest.len() < 3 {
                 io.eprintln("Usage: br dep add <blocker> <blocked>")
                 exit(1)
             }
-            cmd_dep_add(rest.get(1), rest.get(2))
+            cmd_dep_add(rest.get(1) ?? "", rest.get(2) ?? "")
         } else if subcmd == "rm" {
             if rest.len() < 3 {
                 io.eprintln("Usage: br dep rm <blocker> <blocked>")
                 exit(1)
             }
-            cmd_dep_rm(rest.get(1), rest.get(2))
+            cmd_dep_rm(rest.get(1) ?? "", rest.get(2) ?? "")
         } else {
             io.eprintln("Unknown dep subcommand: {subcmd}")
             exit(1)
@@ -187,7 +187,7 @@ fn main() {
             io.eprintln("Usage: br tag <id> <tag> [tag...]")
             exit(1)
         }
-        let id = rest.get(0)
+        let id = rest.get(0) ?? ""
         let tags = collect_non_flag_args(rest, 1)
         cmd_tag(id, tags)
     } else if cmd == "untag" {
@@ -195,7 +195,7 @@ fn main() {
             io.eprintln("Usage: br untag <id> <tag> [tag...]")
             exit(1)
         }
-        let id = rest.get(0)
+        let id = rest.get(0) ?? ""
         let tags = collect_non_flag_args(rest, 1)
         cmd_untag(id, tags)
     } else if cmd == "tags" {
