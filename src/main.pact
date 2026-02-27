@@ -2,7 +2,7 @@ import db
 import commands
 
 fn usage() {
-    io.println("br - Bridge Task Manager")
+    io.println("br 0.1.0 - Bridge Task Manager")
     io.println("")
     io.println("Usage: br <command> [options]")
     io.println("")
@@ -11,7 +11,7 @@ fn usage() {
     io.println("  ls [-s status] [-t tag] [-j]            List tasks")
     io.println("  ready [-t tag] [-j]                     Show ready (unblocked) tasks")
     io.println("  show <id> [-j]                          Show task details")
-    io.println("  edit <id> [--title T] [--desc D] [-p N] Edit a task")
+    io.println("  edit <id> [--title T] [--desc D] [-p N] [--append] Edit a task")
     io.println("  start <id>                              Start a task")
     io.println("  done <id>                               Complete a task")
     io.println("  cancel <id>                             Cancel a task")
@@ -133,7 +133,8 @@ fn main() {
         let mut priority = -1
         if !priority_str.is_empty() { priority = priority_str.to_int() }
         let status = get_option(rest, "-s", "-s")
-        cmd_edit(id, title, description, priority, status)
+        let append = get_flag(rest, "--append", "--append")
+        cmd_edit(id, title, description, priority, status, append)
     } else if cmd == "start" {
         if rest.len() == 0 {
             io.eprintln("Usage: br start <id>")
@@ -206,6 +207,8 @@ fn main() {
         cmd_install()
     } else if cmd == "uninstall" {
         cmd_uninstall()
+    } else if cmd == "--version" || cmd == "-V" || cmd == "version" {
+        io.println("br 0.1.0")
     } else if cmd == "help" || cmd == "--help" || cmd == "-h" {
         usage()
     } else {

@@ -208,14 +208,18 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     io.println(format_task_detail(id, title, description, status, priority, created_at, updated_at, closed_at, tags, blocks_list.join(", "), blocked_by_list.join(", ")))
 }
 
-pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str) {
+pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, append: Bool) {
     let id = resolve_id(id_prefix)
     let mut sets: List[Str] = []
     if !title.is_empty() {
         sets.push("title = '{sql_escape(title)}'")
     }
     if !description.is_empty() {
-        sets.push("description = '{sql_escape(description)}'")
+        if append {
+            sets.push("description = description || '\n' || '{sql_escape(description)}'")
+        } else {
+            sets.push("description = '{sql_escape(description)}'")
+        }
     }
     if priority >= 0 {
         sets.push("priority = {priority}")
@@ -237,15 +241,15 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
 }
 
 pub fn cmd_start(id_prefix: Str) {
-    cmd_edit(id_prefix, "", "", -1, "in_progress")
+    cmd_edit(id_prefix, "", "", -1, "in_progress", false)
 }
 
 pub fn cmd_done(id_prefix: Str) {
-    cmd_edit(id_prefix, "", "", -1, "done")
+    cmd_edit(id_prefix, "", "", -1, "done", false)
 }
 
 pub fn cmd_cancel(id_prefix: Str) {
-    cmd_edit(id_prefix, "", "", -1, "cancelled")
+    cmd_edit(id_prefix, "", "", -1, "cancelled", false)
 }
 
 pub fn cmd_rm(id_prefix: Str) {
