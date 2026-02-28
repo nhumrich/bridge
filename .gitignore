@@ -2,3 +2,4 @@ build/
 .tmp/
 .pact/
 .task/
+.claude/settings.local.json

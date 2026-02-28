@@ -419,14 +419,7 @@ pub fn cmd_stats() {
 
 pub fn cmd_install() {
     let home = get_env("HOME") ?? "/tmp"
-    let src_dir = "{home}/.local/share/bridge/commands"
     let dest_dir = "{home}/.claude/commands"
-
-    if is_dir(src_dir) == 0 {
-        io.eprintln("Command files not found at {src_dir}")
-        io.eprintln("Run 'task install' from the bridge repo first")
-        exit(1)
-    }
 
     let result = process_run("mkdir", ["-p", dest_dir])
     if result.exit_code != 0 {
@@ -434,20 +427,24 @@ pub fn cmd_install() {
         exit(1)
     }
 
-    let files = fs.list_dir(src_dir)
-    let mut installed = 0
-    for file in files {
-        if file.ends_with(".md") {
-            let src = path_join(src_dir, file)
-            let content = read_file(src)
-            let dest_name = file.replace("br-", "br:")
-            let dest = path_join(dest_dir, dest_name)
-            write_file(dest, content)
-            io.println("  Installed: {dest_name}")
-            installed = installed + 1
-        }
+    const CMD_ADD = #embed("../commands/br-add.md")
+    const CMD_CLOSE = #embed("../commands/br-close.md")
+    const CMD_NEXT = #embed("../commands/br-next.md")
+    const CMD_PLAN = #embed("../commands/br-plan.md")
+
+    let names = ["br:add.md", "br:close.md", "br:next.md", "br:plan.md"]
+    let contents = [CMD_ADD, CMD_CLOSE, CMD_NEXT, CMD_PLAN]
+
+    let mut i = 0
+    while i < names.len() {
+        let name = names.get(i) ?? ""
+        let content = contents.get(i) ?? ""
+        let dest = path_join(dest_dir, name)
+        write_file(dest, content)
+        io.println("  Installed: {name}")
+        i = i + 1
     }
-    io.println("Installed {installed} commands to {dest_dir}")
+    io.println("Installed {names.len()} commands to {dest_dir}")
 }
 
 pub fn cmd_uninstall() {

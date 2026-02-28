@@ -21,8 +21,6 @@ tasks:
     cmds:
       - cp {{.BIN}} {{.INSTALL_PATH}}
       - chmod +x {{.INSTALL_PATH}}
-      - mkdir -p ~/.local/share/bridge/commands
-      - cp commands/br-*.md ~/.local/share/bridge/commands/
       - echo "Installed br to {{.INSTALL_PATH}}"
 
   check:

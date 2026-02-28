@@ -1,14 +1,30 @@
-Pick up the next ready task from Bridge for the current repo.
+Pick the best ready tasks (up to 5) and work them in parallel.
 
-First, determine the current repo by running `git rev-parse --show-toplevel` and extracting the basename. Use this as the tag filter: `repo:<basename>`.
+## 1. Determine context
 
-1. Run `br ready -t repo:<basename>` to see unblocked tasks for this project
-2. If there are ready tasks:
-   - Pick the top one (highest priority)
-   - Run `br start <id>`
-   - Tell the user what you're working on and begin implementation
-3. If no tasks are ready:
-   - Run `br blocked` and look for tasks tagged `repo:<basename>`
-   - Report to the user and ask how to proceed
+Run `git rev-parse --show-toplevel` to get the repo basename. If in a git repo, use `repo:<basename>` as tag filter.
 
-If not in a git repo, run `br ready` without a tag filter and let the user choose.
+## 2. Fetch ready tasks
+
+- In a repo: `br ready -t repo:<basename>`
+- Not in a repo: `br ready`
+
+If no tasks are ready, run `br blocked`, report what's stuck, and ask the user how to proceed.
+
+## 3. Rank and select (up to 5)
+
+From the ready list, pick the best tasks to work on now:
+
+1. **Priority first** — P0 before P1 before P2, etc.
+2. **Repo relevance** — prefer tasks tagged with current repo
+3. **Unblocks others** — if you can tell a task is a dependency for blocked work, prefer it
+4. **Skip vague/unclear tasks** — if a task title is ambiguous, deprioritize it
+
+Select up to 5 tasks. If only 1 is ready, just pick it.
+
+## 4. Start and execute
+
+- Run `br start <id>` for each selected task
+- If 1 task: begin implementation directly
+- If 2+ tasks: use the `dispatching-parallel-agents` skill to work them in parallel (each agent gets a worktree)
+- Tell the user which tasks you're picking up and why
