@@ -135,12 +135,14 @@ pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str])
     io.println("Created: {short_id(id)}  {title}")
 }
 
-pub fn cmd_ls(status_filter: Str, tag_filter: Str, json_mode: Bool) {
+pub fn cmd_ls(status_filter: Str, tag_filter: Str, json_mode: Bool, show_closed: Bool, show_all: Bool) {
     let mut where_parts: List[Str] = []
     if !status_filter.is_empty() {
         let sf = sql_escape(status_filter)
         where_parts.push("t.status = '{sf}'")
-    } else {
+    } else if show_closed {
+        where_parts.push("t.status IN ('done', 'cancelled')")
+    } else if !show_all {
         where_parts.push("t.status NOT IN ('done', 'cancelled')")
     }
     if !tag_filter.is_empty() {

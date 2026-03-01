@@ -39,10 +39,14 @@ fn build_parser() -> ArgParser {
     p = add_command(p, "ls", "List tasks")
     p = command_add_option(p, "ls", "-s", "", "Filter by status")
     p = command_add_option(p, "ls", "-t", "", "Filter by tag")
+    p = command_add_flag(p, "ls", "--closed", "-c", "Show closed tasks")
+    p = command_add_flag(p, "ls", "--all", "-a", "Show all tasks")
 
     p = add_command(p, "list", "List tasks")
     p = command_add_option(p, "list", "-s", "", "Filter by status")
     p = command_add_option(p, "list", "-t", "", "Filter by tag")
+    p = command_add_flag(p, "list", "--closed", "-c", "Show closed tasks")
+    p = command_add_flag(p, "list", "--all", "-a", "Show all tasks")
 
     p = add_command(p, "ready", "Show ready (unblocked) tasks")
     p = command_add_option(p, "ready", "-t", "", "Filter by tag")
@@ -138,7 +142,9 @@ fn main() {
     } else if cmd == "ls" || cmd == "list" {
         let status_filter = args_get(a, "s")
         let tag_filter = args_get(a, "t")
-        cmd_ls(status_filter, tag_filter, json_mode)
+        let show_closed = args_has(a, "closed")
+        let show_all = args_has(a, "all")
+        cmd_ls(status_filter, tag_filter, json_mode, show_closed, show_all)
     } else if cmd == "ready" {
         let tag_filter = args_get(a, "t")
         cmd_ready(tag_filter, json_mode)

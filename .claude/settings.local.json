@@ -8,7 +8,18 @@
       "Bash(pact build:*)",
       "Bash(./build/test_ifelse:*)",
       "Bash(./build/main show:*)",
-      "Bash(./build/main ready:*)"
+      "Bash(./build/main ready:*)",
+      "Bash(br:*)",
+      "Bash(/home/nhumrich/personal/bridge/build/main:*)",
+      "Bash(./build/main add:*)",
+      "Bash(./build/main ls:*)",
+      "Bash(./build/main edit:*)",
+      "Bash(./build/main list:*)",
+      "Bash(./build/main untag:*)",
+      "Bash(./build/main version:*)",
+      "Bash(./build/main blarghhh:*)",
+      "Bash(pact test:*)",
+      "Bash(build/main ls:*)"
     ]
   }
 }
