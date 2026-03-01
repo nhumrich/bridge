@@ -1,203 +1,231 @@
+import std.args
 import db
 import commands
 
-fn usage() {
-    io.println("br 0.1.0 - Bridge Task Manager")
-    io.println("")
-    io.println("Usage: br <command> [options]")
-    io.println("")
-    io.println("Commands:")
-    io.println("  add <title> [-p N] [-t tag] [-d desc]   Add a new task")
-    io.println("  ls [-s status] [-t tag] [-j]            List tasks")
-    io.println("  ready [-t tag] [-j]                     Show ready (unblocked) tasks")
-    io.println("  show <id> [-j]                          Show task details")
-    io.println("  edit <id> [--title T] [--desc D] [-p N] [--append] Edit a task")
-    io.println("  start <id>                              Start a task")
-    io.println("  done <id>                               Complete a task")
-    io.println("  cancel <id>                             Cancel a task")
-    io.println("  rm <id>                                 Delete a task")
-    io.println("  dep add <blocker> <blocked>             Add dependency")
-    io.println("  dep rm <blocker> <blocked>              Remove dependency")
-    io.println("  blocked [-j]                            Show blocked tasks")
-    io.println("  tag <id> <tag> [tag...]                 Add tags")
-    io.println("  untag <id> <tag> [tag...]               Remove tags")
-    io.println("  tags                                    List all tags")
-    io.println("  stats                                   Show task statistics")
-    io.println("  install                                 Install Claude Code commands")
-    io.println("  uninstall                               Remove Claude Code commands")
-}
-
-fn get_flag(args: List[Str], flag: Str, alt: Str) -> Bool {
-    let mut i = 0
-    while i < args.len() {
-        let a = args.get(i) ?? ""
-        if a == flag || a == alt {
-            return true
-        }
-        i = i + 1
-    }
-    false
-}
-
-fn get_option(args: List[Str], flag: Str, alt: Str) -> Str {
-    let mut i = 0
-    while i < args.len() - 1 {
-        let a = args.get(i) ?? ""
-        if a == flag || a == alt {
-            return args.get(i + 1) ?? ""
-        }
-        i = i + 1
-    }
-    ""
-}
-
-fn collect_rest(args: List[Str], start: Int) -> List[Str] {
+fn args_get_all(a: Args, name: Str) -> List[Str] {
     let mut result: List[Str] = []
-    let mut i = start
-    while i < args.len() {
-        result.push(args.get(i) ?? "")
+    let mut i = 0
+    while i < a.option_keys.len() {
+        if a.option_keys.get(i).unwrap() == name {
+            result.push(a.option_vals.get(i).unwrap())
+        }
         i = i + 1
     }
     result
 }
 
-fn collect_non_flag_args(args: List[Str], start: Int) -> List[Str] {
+fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     let mut result: List[Str] = []
     let mut i = start
-    while i < args.len() {
-        let a = args.get(i) ?? ""
-        if !a.starts_with("-") {
-            result.push(a)
-        }
+    while i < a.positional_vals.len() {
+        result.push(a.positional_vals.get(i).unwrap())
         i = i + 1
     }
     result
+}
+
+fn build_parser() -> ArgParser {
+    let mut p = argparser_new("br", "Bridge Task Manager")
+
+    p = add_flag(p, "--json", "-j", "JSON output")
+    p = add_flag(p, "--version", "-V", "Print version")
+
+    p = add_command(p, "add", "Add a new task")
+    p = command_add_positional(p, "add", "title", "Task title")
+    p = command_add_option(p, "add", "-p", "", "Priority (0=highest)")
+    p = command_add_option(p, "add", "-t", "", "Tag (repeatable)")
+    p = command_add_option(p, "add", "-d", "", "Description")
+
+    p = add_command(p, "ls", "List tasks")
+    p = command_add_option(p, "ls", "-s", "", "Filter by status")
+    p = command_add_option(p, "ls", "-t", "", "Filter by tag")
+
+    p = add_command(p, "list", "List tasks")
+    p = command_add_option(p, "list", "-s", "", "Filter by status")
+    p = command_add_option(p, "list", "-t", "", "Filter by tag")
+
+    p = add_command(p, "ready", "Show ready (unblocked) tasks")
+    p = command_add_option(p, "ready", "-t", "", "Filter by tag")
+
+    p = add_command(p, "show", "Show task details")
+    p = command_add_positional(p, "show", "id", "Task ID prefix")
+
+    p = add_command(p, "edit", "Edit a task")
+    p = command_add_positional(p, "edit", "id", "Task ID prefix")
+    p = command_add_option(p, "edit", "--title", "", "New title")
+    p = command_add_option(p, "edit", "--desc", "", "New description")
+    p = command_add_option(p, "edit", "-p", "", "New priority")
+    p = command_add_option(p, "edit", "-s", "", "New status")
+    p = command_add_flag(p, "edit", "--append", "", "Append to description")
+
+    p = add_command(p, "start", "Start a task")
+    p = command_add_positional(p, "start", "id", "Task ID prefix")
+
+    p = add_command(p, "done", "Complete a task")
+    p = command_add_positional(p, "done", "id", "Task ID prefix")
+
+    p = add_command(p, "close", "Complete a task")
+    p = command_add_positional(p, "close", "id", "Task ID prefix")
+
+    p = add_command(p, "cancel", "Cancel a task")
+    p = command_add_positional(p, "cancel", "id", "Task ID prefix")
+
+    p = add_command(p, "rm", "Delete a task")
+    p = command_add_positional(p, "rm", "id", "Task ID prefix")
+
+    p = add_command(p, "dep", "Manage dependencies")
+    p = add_command(p, "dep.add", "Add dependency")
+    p = command_add_positional(p, "dep.add", "blocker", "Blocker task ID")
+    p = command_add_positional(p, "dep.add", "blocked", "Blocked task ID")
+    p = add_command(p, "dep.rm", "Remove dependency")
+    p = command_add_positional(p, "dep.rm", "blocker", "Blocker task ID")
+    p = command_add_positional(p, "dep.rm", "blocked", "Blocked task ID")
+
+    p = add_command(p, "blocked", "Show blocked tasks")
+
+    p = add_command(p, "tag", "Add tags to task")
+    p = command_add_positional(p, "tag", "id", "Task ID prefix")
+
+    p = add_command(p, "untag", "Remove tags from task")
+    p = command_add_positional(p, "untag", "id", "Task ID prefix")
+
+    p = add_command(p, "tags", "List all tags")
+    p = add_command(p, "stats", "Show task statistics")
+    p = add_command(p, "install", "Install Claude Code commands")
+    p = add_command(p, "uninstall", "Remove Claude Code commands")
+    p = add_command(p, "version", "Print version")
+
+    p
 }
 
 fn main() {
     init_db()
 
-    let args = env.args()
-    if args.len() < 2 {
-        usage()
+    let p = build_parser()
+    let a = argparse(p)
+    let err = args_error(a)
+    if err == "help" { exit(0) }
+    if err != "" {
+        io.eprintln(err)
+        exit(1)
+    }
+
+    let cmd = args_command(a)
+    let json_mode = args_has(a, "json")
+
+    if args_has(a, "version") {
+        io.println("br 0.1.0")
         exit(0)
     }
 
-    let cmd = args.get(1) ?? ""
-    let rest = collect_rest(args, 2)
-    let json_mode = get_flag(rest, "--json", "-j")
+    if cmd == "" {
+        io.println(generate_help(p))
+        exit(0)
+    }
 
     if cmd == "add" {
-        if rest.len() == 0 {
+        let title = args_positional(a, 0)
+        if title == "" {
             io.eprintln("Usage: br add <title> [-p N] [-t tag] [-d desc]")
             exit(1)
         }
-        let title = rest.get(0) ?? ""
-        let priority_str = get_option(rest, "-p", "-p")
+        let priority_str = args_get(a, "p")
         let mut priority = 2
         if !priority_str.is_empty() { priority = priority_str.to_int() }
-        let description = get_option(rest, "-d", "-d")
-
-        let mut tags: List[Str] = []
-        let mut i = 0
-        while i < rest.len() {
-            if (rest.get(i) ?? "") == "-t" && i + 1 < rest.len() {
-                tags.push(rest.get(i + 1) ?? "")
-            }
-            i = i + 1
-        }
-
+        let description = args_get(a, "d")
+        let tags = args_get_all(a, "t")
         cmd_add(title, description, priority, tags)
     } else if cmd == "ls" || cmd == "list" {
-        let status_filter = get_option(rest, "-s", "-s")
-        let tag_filter = get_option(rest, "-t", "-t")
+        let status_filter = args_get(a, "s")
+        let tag_filter = args_get(a, "t")
         cmd_ls(status_filter, tag_filter, json_mode)
     } else if cmd == "ready" {
-        let tag_filter = get_option(rest, "-t", "-t")
+        let tag_filter = args_get(a, "t")
         cmd_ready(tag_filter, json_mode)
     } else if cmd == "show" {
-        if rest.len() == 0 {
+        let id = args_positional(a, 0)
+        if id == "" {
             io.eprintln("Usage: br show <id>")
             exit(1)
         }
-        cmd_show(rest.get(0) ?? "", json_mode)
+        cmd_show(id, json_mode)
     } else if cmd == "edit" {
-        if rest.len() == 0 {
+        let id = args_positional(a, 0)
+        if id == "" {
             io.eprintln("Usage: br edit <id> [--title T] [--desc D] [-p N] [-s status]")
             exit(1)
         }
-        let id = rest.get(0) ?? ""
-        let title = get_option(rest, "--title", "--title")
-        let description = get_option(rest, "--desc", "--desc")
-        let priority_str = get_option(rest, "-p", "-p")
+        let title = args_get(a, "title")
+        let description = args_get(a, "desc")
+        let priority_str = args_get(a, "p")
         let mut priority = -1
         if !priority_str.is_empty() { priority = priority_str.to_int() }
-        let status = get_option(rest, "-s", "-s")
-        let append = get_flag(rest, "--append", "--append")
+        let status = args_get(a, "s")
+        let append = args_has(a, "append")
         cmd_edit(id, title, description, priority, status, append)
     } else if cmd == "start" {
-        if rest.len() == 0 {
+        let id = args_positional(a, 0)
+        if id == "" {
             io.eprintln("Usage: br start <id>")
             exit(1)
         }
-        cmd_start(rest.get(0) ?? "")
-    } else if cmd == "done" {
-        if rest.len() == 0 {
+        cmd_start(id)
+    } else if cmd == "done" || cmd == "close" {
+        let id = args_positional(a, 0)
+        if id == "" {
             io.eprintln("Usage: br done <id>")
             exit(1)
         }
-        cmd_done(rest.get(0) ?? "")
+        cmd_done(id)
     } else if cmd == "cancel" {
-        if rest.len() == 0 {
+        let id = args_positional(a, 0)
+        if id == "" {
             io.eprintln("Usage: br cancel <id>")
             exit(1)
         }
-        cmd_cancel(rest.get(0) ?? "")
+        cmd_cancel(id)
     } else if cmd == "rm" {
-        if rest.len() == 0 {
+        let id = args_positional(a, 0)
+        if id == "" {
             io.eprintln("Usage: br rm <id>")
             exit(1)
         }
-        cmd_rm(rest.get(0) ?? "")
+        cmd_rm(id)
+    } else if cmd == "dep add" {
+        let blocker = args_positional(a, 0)
+        let blocked = args_positional(a, 1)
+        if blocker == "" || blocked == "" {
+            io.eprintln("Usage: br dep add <blocker> <blocked>")
+            exit(1)
+        }
+        cmd_dep_add(blocker, blocked)
+    } else if cmd == "dep rm" {
+        let blocker = args_positional(a, 0)
+        let blocked = args_positional(a, 1)
+        if blocker == "" || blocked == "" {
+            io.eprintln("Usage: br dep rm <blocker> <blocked>")
+            exit(1)
+        }
+        cmd_dep_rm(blocker, blocked)
     } else if cmd == "dep" {
-        if rest.len() == 0 {
-            io.eprintln("Usage: br dep <add|rm> <blocker> <blocked>")
-            exit(1)
-        }
-        let subcmd = rest.get(0) ?? ""
-        if subcmd == "add" {
-            if rest.len() < 3 {
-                io.eprintln("Usage: br dep add <blocker> <blocked>")
-                exit(1)
-            }
-            cmd_dep_add(rest.get(1) ?? "", rest.get(2) ?? "")
-        } else if subcmd == "rm" {
-            if rest.len() < 3 {
-                io.eprintln("Usage: br dep rm <blocker> <blocked>")
-                exit(1)
-            }
-            cmd_dep_rm(rest.get(1) ?? "", rest.get(2) ?? "")
-        } else {
-            io.eprintln("Unknown dep subcommand: {subcmd}")
-            exit(1)
-        }
+        io.println(generate_command_help(p, "dep"))
     } else if cmd == "blocked" {
         cmd_blocked(json_mode)
     } else if cmd == "tag" {
-        if rest.len() < 2 {
+        let id = args_positional(a, 0)
+        let tags = args_positionals_from(a, 1)
+        if id == "" || tags.is_empty() {
             io.eprintln("Usage: br tag <id> <tag> [tag...]")
             exit(1)
         }
-        let id = rest.get(0) ?? ""
-        let tags = collect_non_flag_args(rest, 1)
         cmd_tag(id, tags)
     } else if cmd == "untag" {
-        if rest.len() < 2 {
+        let id = args_positional(a, 0)
+        let tags = args_positionals_from(a, 1)
+        if id == "" || tags.is_empty() {
             io.eprintln("Usage: br untag <id> <tag> [tag...]")
             exit(1)
         }
-        let id = rest.get(0) ?? ""
-        let tags = collect_non_flag_args(rest, 1)
         cmd_untag(id, tags)
     } else if cmd == "tags" {
         cmd_tags()
@@ -207,13 +235,11 @@ fn main() {
         cmd_install()
     } else if cmd == "uninstall" {
         cmd_uninstall()
-    } else if cmd == "--version" || cmd == "-V" || cmd == "version" {
+    } else if cmd == "version" {
         io.println("br 0.1.0")
-    } else if cmd == "help" || cmd == "--help" || cmd == "-h" {
-        usage()
     } else {
         io.eprintln("Unknown command: {cmd}")
-        io.eprintln("Run 'br help' for usage")
+        io.eprintln("Run 'br --help' for usage")
         exit(1)
     }
 }
