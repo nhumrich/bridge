@@ -55,3 +55,14 @@ pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, pr
     }
     lines.join("\n")
 }
+
+pub fn format_activity_line(action: Str, session_id: Str, project_path: Str, created_at: Str) -> Str {
+    let mut parts: List[Str] = ["  {created_at}  {action}"]
+    if !project_path.is_empty() {
+        parts.push("  path={project_path}")
+    }
+    if !session_id.is_empty() {
+        parts.push("  session={session_id}")
+    }
+    parts.join("")
+}

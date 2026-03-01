@@ -35,6 +35,7 @@ fn build_parser() -> ArgParser {
     p = command_add_option(p, "add", "-p", "", "Priority (0=highest)")
     p = command_add_option(p, "add", "-t", "", "Tag (repeatable)")
     p = command_add_option(p, "add", "-d", "", "Description")
+    p = command_add_option(p, "add", "--session", "", "Session ID")
 
     p = add_command(p, "ls", "List tasks")
     p = command_add_option(p, "ls", "-s", "", "Filter by status")
@@ -64,15 +65,19 @@ fn build_parser() -> ArgParser {
 
     p = add_command(p, "start", "Start a task")
     p = command_add_positional(p, "start", "id", "Task ID prefix")
+    p = command_add_option(p, "start", "--session", "", "Session ID")
 
     p = add_command(p, "done", "Complete a task")
     p = command_add_positional(p, "done", "id", "Task ID prefix")
+    p = command_add_option(p, "done", "--session", "", "Session ID")
 
     p = add_command(p, "close", "Complete a task")
     p = command_add_positional(p, "close", "id", "Task ID prefix")
+    p = command_add_option(p, "close", "--session", "", "Session ID")
 
     p = add_command(p, "cancel", "Cancel a task")
     p = command_add_positional(p, "cancel", "id", "Task ID prefix")
+    p = command_add_option(p, "cancel", "--session", "", "Session ID")
 
     p = add_command(p, "rm", "Delete a task")
     p = command_add_positional(p, "rm", "id", "Task ID prefix")
@@ -127,6 +132,8 @@ fn main() {
         exit(0)
     }
 
+    let session_id = args_get(a, "session")
+
     if cmd == "add" {
         let title = args_positional(a, 0)
         if title == "" {
@@ -138,7 +145,7 @@ fn main() {
         if !priority_str.is_empty() { priority = priority_str.to_int() }
         let description = args_get(a, "d")
         let tags = args_get_all(a, "t")
-        cmd_add(title, description, priority, tags)
+        cmd_add(title, description, priority, tags, session_id)
     } else if cmd == "ls" || cmd == "list" {
         let status_filter = args_get(a, "s")
         let tag_filter = args_get(a, "t")
@@ -175,21 +182,21 @@ fn main() {
             io.eprintln("Usage: br start <id>")
             exit(1)
         }
-        cmd_start(id)
+        cmd_start(id, session_id)
     } else if cmd == "done" || cmd == "close" {
         let id = args_positional(a, 0)
         if id == "" {
             io.eprintln("Usage: br done <id>")
             exit(1)
         }
-        cmd_done(id)
+        cmd_done(id, session_id)
     } else if cmd == "cancel" {
         let id = args_positional(a, 0)
         if id == "" {
             io.eprintln("Usage: br cancel <id>")
             exit(1)
         }
-        cmd_cancel(id)
+        cmd_cancel(id, session_id)
     } else if cmd == "rm" {
         let id = args_positional(a, 0)
         if id == "" {

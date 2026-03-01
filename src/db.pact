@@ -59,8 +59,17 @@ CREATE TABLE IF NOT EXISTS deps (
     blocked_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     PRIMARY KEY (blocker_id, blocked_id)
 );
+CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    session_id TEXT,
+    project_path TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
 CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 CREATE INDEX IF NOT EXISTS idx_deps_blocked ON deps(blocked_id);
-CREATE INDEX IF NOT EXISTS idx_deps_blocker ON deps(blocker_id);"
+CREATE INDEX IF NOT EXISTS idx_deps_blocker ON deps(blocker_id);
+CREATE INDEX IF NOT EXISTS idx_activity_task ON activity_log(task_id);"
     db_exec(schema)
 }

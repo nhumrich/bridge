@@ -1,6 +1,7 @@
 import db
 import ulid
 import display
+import std.json
 
 fn list_contains(items: List[Str], target: Str) -> Bool {
     let mut i = 0
@@ -119,9 +120,19 @@ fn parse_rows_as_task_lines(result: Str) {
     }
 }
 
+// --- Activity Logging ---
+
+fn log_activity(task_id: Str, action: Str, session_id: Str) {
+    let project_path = get_env("PWD") ?? ""
+    let sid = get_env("BR_SESSION_ID") ?? session_id
+    let s = sql_escape(sid)
+    let p = sql_escape(project_path)
+    db_exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ('{task_id}', '{action}', '{s}', '{p}')")
+}
+
 // --- CRUD Commands ---
 
-pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str]) {
+pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str], session_id: Str) {
     let id = generate_id()
     let t = sql_escape(title)
     let d = sql_escape(description)
@@ -132,6 +143,7 @@ pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str])
         db_exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ('{id}', '{tg}')")
     }
 
+    log_activity(id, "created", session_id)
     io.println("Created: {short_id(id)}  {title}")
 }
 
@@ -208,6 +220,20 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     }
 
     io.println(format_task_detail(id, title, description, status, priority, created_at, updated_at, closed_at, tags, blocks_list.join(", "), blocked_by_list.join(", ")))
+
+    let activity_result = db_query("SELECT action, session_id, project_path, created_at FROM activity_log WHERE task_id = '{id}' ORDER BY created_at ASC")
+    if !is_empty_json(activity_result) {
+        io.println("  Activity:")
+        let arows = split_json_rows(activity_result)
+        for ar in arows {
+            let aclean = clean_json_row(ar)
+            let aaction = parse_json_field(aclean, "action")
+            let asession = parse_json_field(aclean, "session_id")
+            let apath = parse_json_field(aclean, "project_path")
+            let aat = parse_json_field(aclean, "created_at")
+            io.println(format_activity_line(aaction, asession, apath, aat))
+        }
+    }
 }
 
 pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, append: Bool) {
@@ -242,16 +268,22 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
     io.println("Updated: {short_id(id)}")
 }
 
-pub fn cmd_start(id_prefix: Str) {
+pub fn cmd_start(id_prefix: Str, session_id: Str) {
+    let id = resolve_id(id_prefix)
     cmd_edit(id_prefix, "", "", -1, "in_progress", false)
+    log_activity(id, "started", session_id)
 }
 
-pub fn cmd_done(id_prefix: Str) {
+pub fn cmd_done(id_prefix: Str, session_id: Str) {
+    let id = resolve_id(id_prefix)
     cmd_edit(id_prefix, "", "", -1, "done", false)
+    log_activity(id, "closed", session_id)
 }
 
-pub fn cmd_cancel(id_prefix: Str) {
+pub fn cmd_cancel(id_prefix: Str, session_id: Str) {
+    let id = resolve_id(id_prefix)
     cmd_edit(id_prefix, "", "", -1, "cancelled", false)
+    log_activity(id, "cancelled", session_id)
 }
 
 pub fn cmd_rm(id_prefix: Str) {
@@ -447,6 +479,79 @@ pub fn cmd_install() {
         i = i + 1
     }
     io.println("Installed {names.len()} commands to {dest_dir}")
+
+    install_hook(home)
+}
+
+fn install_hook(home: Str) {
+    let settings_path = "{home}/.claude/settings.json"
+    let hook_cmd = "bash -c 'read input; sid=$(echo \"$input\" | sed -n '\\''s/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p'\\''); [ -n \"$CLAUDE_ENV_FILE\" ] && [ -n \"$sid\" ] && echo \"export BR_SESSION_ID=$sid\" >> \"$CLAUDE_ENV_FILE\"'"
+
+    json_clear()
+    let mut root = -1
+    if file_exists(settings_path) == 1 {
+        let content = read_file(settings_path)
+        if !content.trim().is_empty() {
+            root = json_parse(content)
+        }
+    }
+    if root == -1 {
+        root = json_new_object()
+    }
+
+    let mut hooks_node = json_get(root, "hooks")
+    if hooks_node == -1 {
+        hooks_node = json_new_object()
+        json_set(root, "hooks", hooks_node)
+    }
+
+    let mut ss_arr = json_get(hooks_node, "SessionStart")
+    if ss_arr == -1 {
+        ss_arr = json_new_array()
+        json_set(hooks_node, "SessionStart", ss_arr)
+    }
+
+    let mut already_installed = false
+    let mut idx = 0
+    while idx < json_len(ss_arr) {
+        let entry = json_at(ss_arr, idx)
+        let inner_hooks = json_get(entry, "hooks")
+        if inner_hooks != -1 {
+            let mut j = 0
+            while j < json_len(inner_hooks) {
+                let h = json_at(inner_hooks, j)
+                let cmd_node = json_get(h, "command")
+                if cmd_node != -1 {
+                    let cmd = json_as_str(cmd_node)
+                    if cmd.contains("BR_SESSION_ID") {
+                        already_installed = true
+                    }
+                }
+                j = j + 1
+            }
+        }
+        idx = idx + 1
+    }
+
+    if already_installed {
+        io.println("  Hook: already installed")
+        return
+    }
+
+    let hook_obj = json_new_object()
+    json_set(hook_obj, "type", json_new_str("command"))
+    json_set(hook_obj, "command", json_new_str(hook_cmd))
+
+    let inner_arr = json_new_array()
+    json_push(inner_arr, hook_obj)
+
+    let entry = json_new_object()
+    json_set(entry, "hooks", inner_arr)
+
+    json_push(ss_arr, entry)
+
+    write_file(settings_path, json_encode(root))
+    io.println("  Hook: SessionStart (BR_SESSION_ID)")
 }
 
 pub fn cmd_uninstall() {
@@ -466,5 +571,70 @@ pub fn cmd_uninstall() {
         io.println("Nothing to uninstall.")
     } else {
         io.println("Removed {removed} commands")
+    }
+
+    uninstall_hook(home)
+}
+
+fn uninstall_hook(home: Str) {
+    let settings_path = "{home}/.claude/settings.json"
+    if file_exists(settings_path) == 0 {
+        return
+    }
+
+    let content = read_file(settings_path)
+    if content.trim().is_empty() {
+        return
+    }
+
+    json_clear()
+    let root = json_parse(content)
+    if root == -1 {
+        return
+    }
+
+    let hooks_node = json_get(root, "hooks")
+    if hooks_node == -1 {
+        return
+    }
+
+    let ss_arr = json_get(hooks_node, "SessionStart")
+    if ss_arr == -1 {
+        return
+    }
+
+    let mut new_arr = json_new_array()
+    let mut removed = false
+    let mut idx = 0
+    while idx < json_len(ss_arr) {
+        let entry = json_at(ss_arr, idx)
+        let mut is_ours = false
+        let inner_hooks = json_get(entry, "hooks")
+        if inner_hooks != -1 {
+            let mut j = 0
+            while j < json_len(inner_hooks) {
+                let h = json_at(inner_hooks, j)
+                let cmd_node = json_get(h, "command")
+                if cmd_node != -1 {
+                    let cmd = json_as_str(cmd_node)
+                    if cmd.contains("BR_SESSION_ID") {
+                        is_ours = true
+                    }
+                }
+                j = j + 1
+            }
+        }
+        if is_ours {
+            removed = true
+        } else {
+            json_push(new_arr, entry)
+        }
+        idx = idx + 1
+    }
+
+    if removed {
+        json_set(hooks_node, "SessionStart", new_arr)
+        write_file(settings_path, json_encode(root))
+        io.println("  Removed: SessionStart hook")
     }
 }
