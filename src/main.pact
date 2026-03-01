@@ -100,6 +100,7 @@ fn build_parser() -> ArgParser {
 
     p = add_command(p, "tags", "List all tags")
     p = add_command(p, "stats", "Show task statistics")
+    p = command_add_option(p, "stats", "-t", "", "Filter by tag")
     p = add_command(p, "install", "Install Claude Code commands")
     p = add_command(p, "uninstall", "Remove Claude Code commands")
     p = add_command(p, "version", "Print version")
@@ -243,7 +244,8 @@ fn main() {
     } else if cmd == "tags" {
         cmd_tags()
     } else if cmd == "stats" {
-        cmd_stats()
+        let tag_filter = args_get(a, "t")
+        cmd_stats(tag_filter)
     } else if cmd == "install" {
         cmd_install()
     } else if cmd == "uninstall" {
