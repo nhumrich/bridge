@@ -63,6 +63,10 @@ fn build_parser() -> ArgParser {
     p = command_add_positional(p, "close", "id", "Task ID prefix")
     p = command_add_option(p, "close", "--session", "", "Session ID")
 
+    p = add_command(p, "stop", "Stop working on a task (back to open)")
+    p = command_add_positional(p, "stop", "id", "Task ID prefix")
+    p = command_add_option(p, "stop", "--session", "", "Session ID")
+
     p = add_command(p, "cancel", "Cancel a task")
     p = command_add_positional(p, "cancel", "id", "Task ID prefix")
     p = command_add_option(p, "cancel", "--session", "", "Session ID")
@@ -173,6 +177,13 @@ fn main() {
             exit(1)
         }
         cmd_start(id, session_id)
+    } else if cmd == "stop" {
+        let id = args_positional(a, 0)
+        if id == "" {
+            io.eprintln("Usage: br stop <id>")
+            exit(1)
+        }
+        cmd_stop(id, session_id)
     } else if cmd == "done" || cmd == "close" {
         let id = args_positional(a, 0)
         if id == "" {

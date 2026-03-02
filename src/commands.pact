@@ -257,6 +257,12 @@ pub fn cmd_start(id_prefix: Str, session_id: Str) {
     log_activity(id, "started", session_id)
 }
 
+pub fn cmd_stop(id_prefix: Str, session_id: Str) {
+    let id = resolve_id(id_prefix)
+    cmd_edit(id_prefix, "", "", -1, "open", false)
+    log_activity(id, "stopped", session_id)
+}
+
 pub fn cmd_done(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
     cmd_edit(id_prefix, "", "", -1, "done", false)
