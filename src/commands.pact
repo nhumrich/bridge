@@ -358,8 +358,13 @@ pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) {
     io.println("Removed: {short_id(blocker_id)} no longer blocks {short_id(blocked_id)}")
 }
 
-pub fn cmd_blocked(json_mode: Bool) {
-    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') GROUP BY t.id ORDER BY t.priority ASC"
+pub fn cmd_blocked(tag_filter: Str, json_mode: Bool) {
+    let mut tag_clause = ""
+    if !tag_filter.is_empty() {
+        let tf = sql_escape(tag_filter)
+        tag_clause = " AND EXISTS (SELECT 1 FROM tags tg2 WHERE tg2.task_id = t.id AND tg2.tag = '{tf}')"
+    }
+    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled'){tag_clause} GROUP BY t.id ORDER BY t.priority ASC"
     let result = db_query(sql)
 
     if json_mode {

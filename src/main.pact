@@ -2,23 +2,11 @@ import std.args
 import db
 import commands
 
-fn args_get_all(a: Args, name: Str) -> List[Str] {
-    let mut result: List[Str] = []
-    let mut i = 0
-    while i < a.option_keys.len() {
-        if a.option_keys.get(i).unwrap() == name {
-            result.push(a.option_vals.get(i).unwrap())
-        }
-        i = i + 1
-    }
-    result
-}
-
 fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     let mut result: List[Str] = []
     let mut i = start
-    while i < a.positional_vals.len() {
-        result.push(a.positional_vals.get(i).unwrap())
+    while i < args_positional_count(a) {
+        result.push(args_positional(a, i))
         i = i + 1
     }
     result
@@ -91,6 +79,7 @@ fn build_parser() -> ArgParser {
     p = command_add_positional(p, "dep.rm", "blocked", "Blocked task ID")
 
     p = add_command(p, "blocked", "Show blocked tasks")
+    p = command_add_option(p, "blocked", "-t", "", "Filter by tag")
 
     p = add_command(p, "tag", "Add tags to task")
     p = command_add_positional(p, "tag", "id", "Task ID prefix")
@@ -224,7 +213,8 @@ fn main() {
     } else if cmd == "dep" {
         io.println(generate_command_help(p, "dep"))
     } else if cmd == "blocked" {
-        cmd_blocked(json_mode)
+        let tag_filter = args_get(a, "t")
+        cmd_blocked(tag_filter, json_mode)
     } else if cmd == "tag" {
         let id = args_positional(a, 0)
         let tags = args_positionals_from(a, 1)
