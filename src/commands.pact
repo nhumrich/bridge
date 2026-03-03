@@ -18,6 +18,15 @@ fn sql_escape(s: Str) -> Str {
     s.replace("'", "''")
 }
 
+fn build_tag_clauses(tag_filters: List[Str]) -> List[Str] {
+    let mut clauses: List[Str] = []
+    for tag in tag_filters {
+        let tf = sql_escape(tag)
+        clauses.push("EXISTS (SELECT 1 FROM tags tg WHERE tg.task_id = t.id AND tg.tag = '{tf}')")
+    }
+    clauses
+}
+
 fn is_empty_json(s: Str) -> Bool {
     s.is_empty() || s == "[]"
 }
@@ -118,7 +127,7 @@ pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str],
     io.println("Created: {short_id(id)}  {title}")
 }
 
-pub fn cmd_ls(status_filter: Str, tag_filter: Str, json_mode: Bool, show_closed: Bool, show_all: Bool) {
+pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_closed: Bool, show_all: Bool) {
     let mut where_parts: List[Str] = []
     if !status_filter.is_empty() {
         let sf = sql_escape(status_filter)
@@ -128,9 +137,8 @@ pub fn cmd_ls(status_filter: Str, tag_filter: Str, json_mode: Bool, show_closed:
     } else if !show_all {
         where_parts.push("t.status NOT IN ('done', 'cancelled')")
     }
-    if !tag_filter.is_empty() {
-        let tf = sql_escape(tag_filter)
-        where_parts.push("EXISTS (SELECT 1 FROM tags tg WHERE tg.task_id = t.id AND tg.tag = '{tf}')")
+    for clause in build_tag_clauses(tag_filters) {
+        where_parts.push(clause)
     }
     let where_clause = if where_parts.len() == 0 { "" } else { " WHERE {where_parts.join(" AND ")}" }
     let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{where_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
@@ -283,11 +291,11 @@ pub fn cmd_rm(id_prefix: Str) {
 
 // --- DAG Commands ---
 
-pub fn cmd_ready(tag_filter: Str, json_mode: Bool) {
+pub fn cmd_ready(tag_filters: List[Str], json_mode: Bool) {
     let mut tag_clause = ""
-    if !tag_filter.is_empty() {
-        let tf = sql_escape(tag_filter)
-        tag_clause = " AND EXISTS (SELECT 1 FROM tags tg WHERE tg.task_id = t.id AND tg.tag = '{tf}')"
+    let tag_clauses = build_tag_clauses(tag_filters)
+    if !tag_clauses.is_empty() {
+        tag_clause = " AND {tag_clauses.join(" AND ")}"
     }
     let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status = 'open' AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){tag_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
     let result = db_query(sql)
@@ -364,11 +372,11 @@ pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) {
     io.println("Removed: {short_id(blocker_id)} no longer blocks {short_id(blocked_id)}")
 }
 
-pub fn cmd_blocked(tag_filter: Str, json_mode: Bool) {
+pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
     let mut tag_clause = ""
-    if !tag_filter.is_empty() {
-        let tf = sql_escape(tag_filter)
-        tag_clause = " AND EXISTS (SELECT 1 FROM tags tg2 WHERE tg2.task_id = t.id AND tg2.tag = '{tf}')"
+    let tag_clauses = build_tag_clauses(tag_filters)
+    if !tag_clauses.is_empty() {
+        tag_clause = " AND {tag_clauses.join(" AND ")}"
     }
     let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled'){tag_clause} GROUP BY t.id ORDER BY t.priority ASC"
     let result = db_query(sql)
@@ -440,14 +448,18 @@ pub fn cmd_tags() {
     }
 }
 
-pub fn cmd_stats(tag_filter: Str) {
-    let mut tag_join = ""
-    let mut tag_where = ""
-    if !tag_filter.is_empty() {
-        let tf = sql_escape(tag_filter)
-        tag_join = " JOIN tags tg ON tg.task_id = t.id"
-        tag_where = " WHERE tg.tag = '{tf}'"
+pub fn cmd_stats(tag_filters: List[Str]) {
+    let mut tag_joins: List[Str] = []
+    let mut tag_wheres: List[Str] = []
+    let mut ti = 0
+    for tag in tag_filters {
+        let tf = sql_escape(tag)
+        tag_joins.push(" JOIN tags tg{ti} ON tg{ti}.task_id = t.id")
+        tag_wheres.push("tg{ti}.tag = '{tf}'")
+        ti = ti + 1
     }
+    let tag_join = tag_joins.join("")
+    let tag_where = if tag_wheres.is_empty() { "" } else { " WHERE {tag_wheres.join(" AND ")}" }
     let result = db_query("SELECT t.status, COUNT(*) as count FROM tasks t{tag_join}{tag_where} GROUP BY t.status ORDER BY t.status")
     if is_empty_json(result) {
         io.println("No tasks.")

@@ -142,13 +142,13 @@ fn main() {
         cmd_add(title, description, priority, tags, session_id)
     } else if cmd == "ls" || cmd == "list" {
         let status_filter = args_get(a, "s")
-        let tag_filter = args_get(a, "t")
+        let tag_filters = args_get_all(a, "t")
         let show_closed = args_has(a, "closed")
         let show_all = args_has(a, "all")
-        cmd_ls(status_filter, tag_filter, json_mode, show_closed, show_all)
+        cmd_ls(status_filter, tag_filters, json_mode, show_closed, show_all)
     } else if cmd == "ready" {
-        let tag_filter = args_get(a, "t")
-        cmd_ready(tag_filter, json_mode)
+        let tag_filters = args_get_all(a, "t")
+        cmd_ready(tag_filters, json_mode)
     } else if cmd == "show" {
         let id = args_positional(a, 0)
         if id == "" {
@@ -224,8 +224,8 @@ fn main() {
     } else if cmd == "dep" {
         io.println(generate_command_help(p, "dep"))
     } else if cmd == "blocked" {
-        let tag_filter = args_get(a, "t")
-        cmd_blocked(tag_filter, json_mode)
+        let tag_filters = args_get_all(a, "t")
+        cmd_blocked(tag_filters, json_mode)
     } else if cmd == "tag" {
         let id = args_positional(a, 0)
         let tags = args_positionals_from(a, 1)
@@ -245,8 +245,8 @@ fn main() {
     } else if cmd == "tags" {
         cmd_tags()
     } else if cmd == "stats" {
-        let tag_filter = args_get(a, "t")
-        cmd_stats(tag_filter)
+        let tag_filters = args_get_all(a, "t")
+        cmd_stats(tag_filters)
     } else if cmd == "install" {
         cmd_install()
     } else if cmd == "uninstall" {
