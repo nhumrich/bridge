@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO: install pact here
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          pact build src/main.pact --release -T linux -o dist/br-linux-amd64
+          pact build src/main.pact --release -T linux-arm64 -o dist/br-linux-arm64
+          pact build src/main.pact --release -T macos -o dist/br-darwin-amd64
+          pact build src/main.pact --release -T macos-arm64 -o dist/br-darwin-arm64
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum br-* > checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/br-*
+            dist/checksums.txt

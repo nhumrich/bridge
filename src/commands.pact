@@ -513,7 +513,7 @@ pub fn cmd_install() {
 
 fn install_hook(home: Str) {
     let settings_path = "{home}/.claude/settings.json"
-    let hook_cmd = "bash -c 'read input; sid=$(echo \"$input\" | sed -n '\\''s/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p'\\''); [ -n \"$CLAUDE_ENV_FILE\" ] && [ -n \"$sid\" ] && echo \"export BR_SESSION_ID=$sid\" >> \"$CLAUDE_ENV_FILE\"'"
+    let hook_cmd = #"bash -c 'read input; sid=$(echo "$input" | sed -n '"'"'s/.*"session_id":"\([^"]*\)".*/\1/p'"'"'); [ -n "$CLAUDE_ENV_FILE" ] && [ -n "$sid" ] && echo "export BR_SESSION_ID=$sid" >> "$CLAUDE_ENV_FILE"'"#
 
     json_clear()
     let mut root = -1

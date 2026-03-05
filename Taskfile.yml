@@ -49,3 +49,22 @@ tasks:
     deps: [build]
     cmds:
       - "{{.BIN}} {{.CLI_ARGS}}"
+
+  release:
+    desc: Cross-compile release binaries to dist/
+    cmds:
+      - mkdir -p dist
+      - pact build {{.SRC}} --release -T linux -o dist/br-linux-amd64
+      - pact build {{.SRC}} --release -T linux-arm64 -o dist/br-linux-arm64
+      - pact build {{.SRC}} --release -T macos -o dist/br-darwin-amd64
+      - pact build {{.SRC}} --release -T macos-arm64 -o dist/br-darwin-arm64
+      - cd dist && sha256sum br-* > checksums.txt
+      - echo "Release binaries in dist/"
+
+  bump:
+    desc: "Bump version (usage: task bump -- 0.2.0)"
+    cmds:
+      - sed -i 's/^version = ".*"/version = "{{.CLI_ARGS}}"/' pact.toml
+      - sed -i 's/set_version(p, ".*")/set_version(p, "{{.CLI_ARGS}}")/' src/main.pact
+      - 'sed -i ''s/"version": ".*"/"version": "{{.CLI_ARGS}}"/'' .claude-plugin/plugin.json'
+      - echo "Bumped to v{{.CLI_ARGS}}"

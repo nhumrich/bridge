@@ -14,9 +14,9 @@ fn args_positionals_from(a: Args, start: Int) -> List[Str] {
 
 fn build_parser() -> ArgParser {
     let mut p = argparser_new("br", "Bridge Task Manager")
+    p = set_version(p, "0.1.0")
 
     p = add_flag(p, "--json", "-j", "JSON output")
-    p = add_flag(p, "--version", "-V", "Print version")
 
     p = add_command(p, "add", "Add a new task")
     p = command_add_positional(p, "add", "title", "Task title")
@@ -96,8 +96,6 @@ fn build_parser() -> ArgParser {
     p = command_add_option(p, "stats", "-t", "", "Filter by tag")
     p = add_command(p, "install", "Install Claude Code commands")
     p = add_command(p, "uninstall", "Remove Claude Code commands")
-    p = add_command(p, "version", "Print version")
-
     p
 }
 
@@ -107,7 +105,7 @@ fn main() {
     let p = build_parser()
     let a = argparse(p)
     let err = args_error(a)
-    if err == "help" { exit(0) }
+    if err == "help" || err == "version" { exit(0) }
     if err != "" {
         io.eprintln(err)
         exit(1)
@@ -115,11 +113,6 @@ fn main() {
 
     let cmd = args_command(a)
     let json_mode = args_has(a, "json")
-
-    if args_has(a, "version") {
-        io.println("br 0.1.0")
-        exit(0)
-    }
 
     if cmd == "" {
         io.println(generate_help(p))
@@ -206,16 +199,14 @@ fn main() {
         }
         cmd_rm(id)
     } else if cmd == "dep add" {
-        let blocker = args_positional(a, 0)
-        let blocked = args_positional(a, 1)
+        let (blocker, blocked) = (args_positional(a, 0), args_positional(a, 1))
         if blocker == "" || blocked == "" {
             io.eprintln("Usage: br dep add <blocker> <blocked>")
             exit(1)
         }
         cmd_dep_add(blocker, blocked)
     } else if cmd == "dep rm" {
-        let blocker = args_positional(a, 0)
-        let blocked = args_positional(a, 1)
+        let (blocker, blocked) = (args_positional(a, 0), args_positional(a, 1))
         if blocker == "" || blocked == "" {
             io.eprintln("Usage: br dep rm <blocker> <blocked>")
             exit(1)
@@ -251,8 +242,6 @@ fn main() {
         cmd_install()
     } else if cmd == "uninstall" {
         cmd_uninstall()
-    } else if cmd == "version" {
-        io.println("br 0.1.0")
     } else {
         io.eprintln("Unknown command: {cmd}")
         io.eprintln("Run 'br --help' for usage")
