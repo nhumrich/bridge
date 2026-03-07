@@ -4,12 +4,10 @@ import display
 import std.json
 
 fn list_contains(items: List[Str], target: Str) -> Bool {
-    let mut i = 0
-    while i < items.len() {
-        if (items.get(i) ?? "") == target {
+    for item in items {
+        if item == target {
             return true
         }
-        i = i + 1
     }
     false
 }
@@ -27,77 +25,60 @@ fn build_tag_clauses(tag_filters: List[Str]) -> List[Str] {
     clauses
 }
 
-fn is_empty_json(s: Str) -> Bool {
-    s.is_empty() || s == "[]"
-}
-
-fn jstr(row: Int, field: Str) -> Str {
-    let node = json_get(row, field)
-    if node == -1 { return "" }
-    if json_type(node) == JSON_NULL { return "" }
-    json_as_str(node)
-}
-
-fn jint(row: Int, field: Str) -> Int {
-    let node = json_get(row, field)
-    if node == -1 { return 0 }
-    if json_type(node) == JSON_NULL { return 0 }
-    json_as_int(node)
-}
-
 pub fn resolve_id(prefix: Str) -> Str {
     let escaped = sql_escape(prefix.to_lower())
-    let result = db_query("SELECT id FROM tasks WHERE id LIKE '{escaped}%%'")
-    if is_empty_json(result) {
+    let rows = db.query("SELECT id FROM tasks WHERE id LIKE '{escaped}%%'")
+    if rows.is_empty() {
         io.eprintln("No task matches prefix: {prefix}")
         exit(1)
     }
-    json_clear()
-    let root = json_parse(result)
-    if json_len(root) > 1 {
+    if rows.len() > 1 {
         io.eprintln("Ambiguous prefix '{prefix}', multiple matches")
         exit(1)
     }
-    let row = json_at(root, 0)
-    jstr(row, "id")
+    let row = rows.get(0) ?? []
+    row.get(0) ?? ""
 }
 
 fn tags_for_task(task_id: Str) -> Str {
-    let result = db_query("SELECT tag FROM tags WHERE task_id = '{task_id}'")
-    if is_empty_json(result) {
-        return ""
-    }
+    let rows = db.query("SELECT tag FROM tags WHERE task_id = '{task_id}'")
     let mut tags: List[Str] = []
-    json_clear()
-    let root = json_parse(result)
-    let count = json_len(root)
-    let mut i = 0
-    while i < count {
-        let row = json_at(root, i)
-        let tag = jstr(row, "tag")
+    for row in rows {
+        let tag = row.get(0) ?? ""
         if !tag.is_empty() {
             tags.push(tag)
         }
-        i = i + 1
     }
     tags.join(", ")
 }
 
-fn parse_rows_as_task_lines(result: Str) {
-    json_clear()
-    let root = json_parse(result)
-    let count = json_len(root)
-    let mut i = 0
-    while i < count {
-        let row = json_at(root, i)
-        let id = jstr(row, "id")
-        let title = jstr(row, "title")
-        let priority = jint(row, "priority")
-        let status = jstr(row, "status")
-        let tags = jstr(row, "tags")
+
+// SELECT t.id, t.title, t.priority, t.status, tags
+fn print_task_rows(rows: List[List[Str]]) {
+    for row in rows {
+        let id = row.get(0) ?? ""
+        let title = row.get(1) ?? ""
+        let priority = (row.get(2) ?? "2").to_int()
+        let status = row.get(3) ?? ""
+        let tags = row.get(4) ?? ""
         io.println(format_task_line(id, title, priority, status, tags))
-        i = i + 1
     }
+}
+
+fn rows_to_json(rows: List[List[Str]], col_names: List[Str]) -> Str {
+    let arr = json_new_array()
+    for row in rows {
+        let obj = json_new_object()
+        let mut ci = 0
+        while ci < col_names.len() {
+            let name = col_names.get(ci) ?? ""
+            let val = row.get(ci) ?? ""
+            json_set(obj, name, json_new_str(val))
+            ci = ci + 1
+        }
+        json_push(arr, obj)
+    }
+    json_encode(arr)
 }
 
 // --- Activity Logging ---
@@ -107,7 +88,7 @@ fn log_activity(task_id: Str, action: Str, session_id: Str) {
     let sid = get_env("BR_SESSION_ID") ?? session_id
     let s = sql_escape(sid)
     let p = sql_escape(project_path)
-    db_exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ('{task_id}', '{action}', '{s}', '{p}')")
+    db.exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ('{task_id}', '{action}', '{s}', '{p}')")
 }
 
 // --- CRUD Commands ---
@@ -116,11 +97,11 @@ pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str],
     let id = generate_id()
     let t = sql_escape(title)
     let d = sql_escape(description)
-    db_exec("INSERT INTO tasks (id, title, description, priority) VALUES ('{id}', '{t}', '{d}', {priority})")
+    db.exec("INSERT INTO tasks (id, title, description, priority) VALUES ('{id}', '{t}', '{d}', {priority})")
 
     for tag in tag_list {
         let tg = sql_escape(tag)
-        db_exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ('{id}', '{tg}')")
+        db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ('{id}', '{tg}')")
     }
 
     log_activity(id, "created", session_id)
@@ -142,87 +123,72 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_
     }
     let where_clause = if where_parts.len() == 0 { "" } else { " WHERE {where_parts.join(" AND ")}" }
     let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{where_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
-    let result = db_query(sql)
+    let rows = db.query(sql)
 
     if json_mode {
-        io.println(result)
+        io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags"]))
         return
     }
 
-    if is_empty_json(result) {
+    if rows.is_empty() {
         io.println("No tasks found.")
         return
     }
 
-    parse_rows_as_task_lines(result)
+    print_task_rows(rows)
 }
 
 pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     let id = resolve_id(id_prefix)
-    let result = db_query("SELECT * FROM tasks WHERE id = '{id}'")
+    let row_opt = db.query_one("SELECT id, title, description, status, priority, created_at, updated_at, closed_at FROM tasks WHERE id = '{id}'")
+    let row = row_opt ?? []
 
     if json_mode {
-        io.println(result)
+        let obj = json_new_object()
+        let names = ["id", "title", "description", "status", "priority", "created_at", "updated_at", "closed_at"]
+        let mut ci = 0
+        while ci < names.len() {
+            let name = names.get(ci) ?? ""
+            let val = row.get(ci) ?? ""
+            json_set(obj, name, json_new_str(val))
+            ci = ci + 1
+        }
+        io.println(json_encode(obj))
         return
     }
 
-    json_clear()
-    let root = json_parse(result)
-    let row = json_at(root, 0)
-    let title = jstr(row, "title")
-    let description = jstr(row, "description")
-    let status = jstr(row, "status")
-    let priority = jint(row, "priority")
-    let created_at = jstr(row, "created_at")
-    let updated_at = jstr(row, "updated_at")
-    let closed_at = jstr(row, "closed_at")
+    let title = row.get(1) ?? ""
+    let description = row.get(2) ?? ""
+    let status = row.get(3) ?? ""
+    let priority = (row.get(4) ?? "2").to_int()
+    let created_at = row.get(5) ?? ""
+    let updated_at = row.get(6) ?? ""
+    let closed_at = row.get(7) ?? ""
     let tags = tags_for_task(id)
 
-    let blocks_result = db_query("SELECT blocked_id FROM deps WHERE blocker_id = '{id}'")
+    let blocks_rows = db.query("SELECT blocked_id FROM deps WHERE blocker_id = '{id}'")
     let mut blocks_list: List[Str] = []
-    if !is_empty_json(blocks_result) {
-        json_clear()
-        let broot = json_parse(blocks_result)
-        let bcount = json_len(broot)
-        let mut bi = 0
-        while bi < bcount {
-            let brow = json_at(broot, bi)
-            blocks_list.push(short_id(jstr(brow, "blocked_id")))
-            bi = bi + 1
-        }
+    for br in blocks_rows {
+        blocks_list.push(short_id(br.get(0) ?? ""))
     }
 
-    let blocked_by_result = db_query("SELECT blocker_id FROM deps WHERE blocked_id = '{id}'")
+    let blocked_by_rows = db.query("SELECT blocker_id FROM deps WHERE blocked_id = '{id}'")
     let mut blocked_by_list: List[Str] = []
-    if !is_empty_json(blocked_by_result) {
-        json_clear()
-        let bbroot = json_parse(blocked_by_result)
-        let bbcount = json_len(bbroot)
-        let mut bbi = 0
-        while bbi < bbcount {
-            let bbrow = json_at(bbroot, bbi)
-            blocked_by_list.push(short_id(jstr(bbrow, "blocker_id")))
-            bbi = bbi + 1
-        }
+    for bbr in blocked_by_rows {
+        blocked_by_list.push(short_id(bbr.get(0) ?? ""))
     }
 
     io.println(format_task_detail(id, title, description, status, priority, created_at, updated_at, closed_at, tags, blocks_list.join(", "), blocked_by_list.join(", ")))
 
-    let activity_result = db_query("SELECT action, session_id, project_path, created_at FROM activity_log WHERE task_id = '{id}' ORDER BY created_at ASC")
-    if !is_empty_json(activity_result) {
+    let activity_rows = db.query("SELECT action, session_id, project_path, created_at FROM activity_log WHERE task_id = '{id}' ORDER BY created_at ASC")
+    if !activity_rows.is_empty() {
         io.println("  Activity:")
-        json_clear()
-        let aroot = json_parse(activity_result)
-        let acount = json_len(aroot)
-        let mut ai = 0
-        while ai < acount {
-            let ar = json_at(aroot, ai)
-            let aaction = jstr(ar, "action")
-            let asession = jstr(ar, "session_id")
-            let apath = jstr(ar, "project_path")
-            let aat = jstr(ar, "created_at")
+        for ar in activity_rows {
+            let aaction = ar.get(0) ?? ""
+            let asession = ar.get(1) ?? ""
+            let apath = ar.get(2) ?? ""
+            let aat = ar.get(3) ?? ""
             io.println(format_activity_line(aaction, asession, apath, aat))
-            ai = ai + 1
         }
     }
 }
@@ -255,7 +221,7 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
     }
     sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
     let set_clause = sets.join(", ")
-    db_exec("UPDATE tasks SET {set_clause} WHERE id = '{id}'")
+    db.exec("UPDATE tasks SET {set_clause} WHERE id = '{id}'")
     io.println("Updated: {short_id(id)}")
 }
 
@@ -285,7 +251,7 @@ pub fn cmd_cancel(id_prefix: Str, session_id: Str) {
 
 pub fn cmd_rm(id_prefix: Str) {
     let id = resolve_id(id_prefix)
-    db_exec("DELETE FROM tasks WHERE id = '{id}'")
+    db.exec("DELETE FROM tasks WHERE id = '{id}'")
     io.println("Deleted: {short_id(id)}")
 }
 
@@ -298,19 +264,19 @@ pub fn cmd_ready(tag_filters: List[Str], json_mode: Bool) {
         tag_clause = " AND {tag_clauses.join(" AND ")}"
     }
     let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status = 'open' AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){tag_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
-    let result = db_query(sql)
+    let rows = db.query(sql)
 
     if json_mode {
-        io.println(result)
+        io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags"]))
         return
     }
 
-    if is_empty_json(result) {
+    if rows.is_empty() {
         io.println("No ready tasks.")
         return
     }
 
-    parse_rows_as_task_lines(result)
+    print_task_rows(rows)
 }
 
 fn has_cycle(from_id: Str, to_id: Str) -> Bool {
@@ -327,19 +293,11 @@ fn has_cycle(from_id: Str, to_id: Str) -> Bool {
             // already visited
         } else {
             visited.push(current)
-            let deps_result = db_query("SELECT blocked_id FROM deps WHERE blocker_id = '{current}'")
-            if !is_empty_json(deps_result) {
-                json_clear()
-                let droot = json_parse(deps_result)
-                let dcount = json_len(droot)
-                let mut di = 0
-                while di < dcount {
-                    let dr = json_at(droot, di)
-                    let did = jstr(dr, "blocked_id")
-                    if !did.is_empty() {
-                        stack.push(did)
-                    }
-                    di = di + 1
+            let deps_rows = db.query("SELECT blocked_id FROM deps WHERE blocker_id = '{current}'")
+            for dr in deps_rows {
+                let did = dr.get(0) ?? ""
+                if !did.is_empty() {
+                    stack.push(did)
                 }
             }
         }
@@ -361,14 +319,14 @@ pub fn cmd_dep_add(blocker_prefix: Str, blocked_prefix: Str) {
         exit(1)
     }
 
-    db_exec("INSERT OR IGNORE INTO deps (blocker_id, blocked_id) VALUES ('{blocker_id}', '{blocked_id}')")
+    db.exec("INSERT OR IGNORE INTO deps (blocker_id, blocked_id) VALUES ('{blocker_id}', '{blocked_id}')")
     io.println("Added: {short_id(blocker_id)} blocks {short_id(blocked_id)}")
 }
 
 pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) {
     let blocker_id = resolve_id(blocker_prefix)
     let blocked_id = resolve_id(blocked_prefix)
-    db_exec("DELETE FROM deps WHERE blocker_id = '{blocker_id}' AND blocked_id = '{blocked_id}'")
+    db.exec("DELETE FROM deps WHERE blocker_id = '{blocker_id}' AND blocked_id = '{blocked_id}'")
     io.println("Removed: {short_id(blocker_id)} no longer blocks {short_id(blocked_id)}")
 }
 
@@ -379,33 +337,27 @@ pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
         tag_clause = " AND {tag_clauses.join(" AND ")}"
     }
     let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled'){tag_clause} GROUP BY t.id ORDER BY t.priority ASC"
-    let result = db_query(sql)
+    let rows = db.query(sql)
 
     if json_mode {
-        io.println(result)
+        io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags", "blockers"]))
         return
     }
 
-    if is_empty_json(result) {
+    if rows.is_empty() {
         io.println("No blocked tasks.")
         return
     }
 
-    json_clear()
-    let root = json_parse(result)
-    let num = json_len(root)
-    let mut i = 0
-    while i < num {
-        let row = json_at(root, i)
-        let id = jstr(row, "id")
-        let title = jstr(row, "title")
-        let priority = jint(row, "priority")
-        let status = jstr(row, "status")
-        let tags = jstr(row, "tags")
-        let blockers = jstr(row, "blockers")
+    for row in rows {
+        let id = row.get(0) ?? ""
+        let title = row.get(1) ?? ""
+        let priority = (row.get(2) ?? "2").to_int()
+        let status = row.get(3) ?? ""
+        let tags = row.get(4) ?? ""
+        let blockers = row.get(5) ?? ""
         let line = format_task_line(id, title, priority, status, tags)
         io.println("{line}  (blocked by: {blockers})")
-        i = i + 1
     }
 }
 
@@ -415,7 +367,7 @@ pub fn cmd_tag(id_prefix: Str, tags: List[Str]) {
     let id = resolve_id(id_prefix)
     for tag in tags {
         let tg = sql_escape(tag)
-        db_exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ('{id}', '{tg}')")
+        db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ('{id}', '{tg}')")
     }
     io.println("Tagged: {short_id(id)}")
 }
@@ -424,27 +376,21 @@ pub fn cmd_untag(id_prefix: Str, tags: List[Str]) {
     let id = resolve_id(id_prefix)
     for tag in tags {
         let tg = sql_escape(tag)
-        db_exec("DELETE FROM tags WHERE task_id = '{id}' AND tag = '{tg}'")
+        db.exec("DELETE FROM tags WHERE task_id = '{id}' AND tag = '{tg}'")
     }
     io.println("Untagged: {short_id(id)}")
 }
 
 pub fn cmd_tags() {
-    let result = db_query("SELECT tag, COUNT(*) as count FROM tags GROUP BY tag ORDER BY count DESC, tag ASC")
-    if is_empty_json(result) {
+    let rows = db.query("SELECT tag, COUNT(*) as count FROM tags GROUP BY tag ORDER BY count DESC, tag ASC")
+    if rows.is_empty() {
         io.println("No tags found.")
         return
     }
-    json_clear()
-    let root = json_parse(result)
-    let num = json_len(root)
-    let mut i = 0
-    while i < num {
-        let row = json_at(root, i)
-        let tag = jstr(row, "tag")
-        let cnt = jint(row, "count")
+    for row in rows {
+        let tag = row.get(0) ?? ""
+        let cnt = (row.get(1) ?? "0").to_int()
         io.println("  {tag}  ({cnt})")
-        i = i + 1
     }
 }
 
@@ -460,22 +406,16 @@ pub fn cmd_stats(tag_filters: List[Str]) {
     }
     let tag_join = tag_joins.join("")
     let tag_where = if tag_wheres.is_empty() { "" } else { " WHERE {tag_wheres.join(" AND ")}" }
-    let result = db_query("SELECT t.status, COUNT(*) as count FROM tasks t{tag_join}{tag_where} GROUP BY t.status ORDER BY t.status")
-    if is_empty_json(result) {
+    let rows = db.query("SELECT t.status, COUNT(*) as count FROM tasks t{tag_join}{tag_where} GROUP BY t.status ORDER BY t.status")
+    if rows.is_empty() {
         io.println("No tasks.")
         return
     }
     io.println("Tasks:")
-    json_clear()
-    let root = json_parse(result)
-    let num = json_len(root)
-    let mut i = 0
-    while i < num {
-        let row = json_at(root, i)
-        let status = jstr(row, "status")
-        let cnt = jint(row, "count")
+    for row in rows {
+        let status = row.get(0) ?? ""
+        let cnt = (row.get(1) ?? "0").to_int()
         io.println("  {status}: {cnt}")
-        i = i + 1
     }
 }
 
