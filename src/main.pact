@@ -14,7 +14,7 @@ fn args_positionals_from(a: Args, start: Int) -> List[Str] {
 
 fn build_parser() -> ArgParser {
     let mut p = argparser_new("br", "Bridge Task Manager")
-    p = set_version(p, "0.1.0")
+    p = set_version(p, "0.2.0")
 
     p = add_flag(p, "--json", "-j", "JSON output")
 
