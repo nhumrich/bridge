@@ -336,7 +336,7 @@ pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
     if !tag_clauses.is_empty() {
         tag_clause = " AND {tag_clauses.join(" AND ")}"
     }
-    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled'){tag_clause} GROUP BY t.id ORDER BY t.priority ASC"
+    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){tag_clause} GROUP BY t.id ORDER BY t.priority ASC"
     let rows = db.query(sql)
 
     if json_mode {
