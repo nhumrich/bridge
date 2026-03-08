@@ -49,7 +49,7 @@ fn build_parser() -> ArgParser {
     p = command_add_option(p, "edit", "--desc", "", "New description")
     p = command_add_option(p, "edit", "-p", "", "New priority")
     p = command_add_option(p, "edit", "-s", "", "New status")
-    p = command_add_flag(p, "edit", "--append", "", "Append to description")
+    p = command_add_option(p, "edit", "--append", "", "Append to description")
 
     p = add_command(p, "start", "Start a task")
     p = command_add_positional(p, "start", "id", "Task ID prefix")
@@ -156,12 +156,17 @@ fn main() {
             exit(1)
         }
         let title = args_get(a, "title")
-        let description = args_get(a, "desc")
+        let append_val = args_get(a, "append")
+        let mut description = args_get(a, "desc")
+        let mut append = false
+        if !append_val.is_empty() {
+            description = append_val
+            append = true
+        }
         let priority_str = args_get(a, "p")
         let mut priority = -1
         if !priority_str.is_empty() { priority = priority_str.to_int() }
         let status = args_get(a, "s")
-        let append = args_has(a, "append")
         cmd_edit(id, title, description, priority, status, append)
     } else if cmd == "start" {
         let id = args_positional(a, 0)
