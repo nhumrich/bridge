@@ -25,7 +25,7 @@ fn parse_priority(s: Str) -> Int {
 
 fn build_parser() -> ArgParser {
     let mut p = argparser_new("br", "Bridge Task Manager")
-    p = set_version(p, "0.2.0")
+    p = set_version(p, "0.2.1")
 
     p = add_flag(p, "--json", "-j", "JSON output")
 
