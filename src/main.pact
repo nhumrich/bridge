@@ -12,6 +12,17 @@ fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     result
 }
 
+fn parse_priority(s: Str) -> Int {
+    let mut val = s.to_lower()
+    if val.starts_with("p") { val = val.slice(1, val.len()) }
+    let n = val.to_int()
+    if n == 0 && val != "0" {
+        io.eprintln("Invalid priority: {s}")
+        exit(1)
+    }
+    n
+}
+
 fn build_parser() -> ArgParser {
     let mut p = argparser_new("br", "Bridge Task Manager")
     p = set_version(p, "0.2.0")
@@ -129,7 +140,7 @@ fn main() {
         }
         let priority_str = args_get(a, "p")
         let mut priority = 2
-        if !priority_str.is_empty() { priority = priority_str.to_int() }
+        if !priority_str.is_empty() { priority = parse_priority(priority_str) }
         let description = args_get(a, "d")
         let tags = args_get_all(a, "t")
         cmd_add(title, description, priority, tags, session_id)
@@ -165,7 +176,7 @@ fn main() {
         }
         let priority_str = args_get(a, "p")
         let mut priority = -1
-        if !priority_str.is_empty() { priority = priority_str.to_int() }
+        if !priority_str.is_empty() { priority = parse_priority(priority_str) }
         let status = args_get(a, "s")
         cmd_edit(id, title, description, priority, status, append)
     } else if cmd == "start" {
