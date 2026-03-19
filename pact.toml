@@ -1,6 +1,7 @@
 [package]
 name = "bridge"
 version = "0.2.1"
+pact-version = "0.20.0"
 
 [native-dependencies]
 sqlite3 = { path = "vendor/sqlite3/sqlite3.c" }

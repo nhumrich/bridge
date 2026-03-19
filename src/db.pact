@@ -13,6 +13,7 @@ pub fn db_path() -> Str {
 
 pub fn db_open_connection() {
     db.open(db_path())
+    db.exec("PRAGMA busy_timeout=5000")
 }
 
 pub fn init_db() {
