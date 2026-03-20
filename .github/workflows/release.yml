@@ -12,8 +12,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/nhumrich/pact
-      options: --pull always
+      image: ghcr.io/nhumrich/pact@sha256:a05be3fd0485e0dc90cfad2a418a69938603f7a3eff0c40fe6d16224d301c2f2
     steps:
       - uses: actions/checkout@v4
 
