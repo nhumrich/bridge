@@ -11,10 +11,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    container: ghcr.io/nhumrich/pact
     steps:
       - uses: actions/checkout@v4
-
-      # TODO: install pact here
 
       - name: Build binaries
         run: |
