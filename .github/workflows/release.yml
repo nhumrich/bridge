@@ -11,7 +11,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    container: ghcr.io/nhumrich/pact
+    container:
+      image: ghcr.io/nhumrich/pact
+      options: --pull always
     steps:
       - uses: actions/checkout@v4
 
