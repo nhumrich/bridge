@@ -449,7 +449,29 @@ pub fn cmd_install() {
     }
     io.println("Installed {names.len()} commands to {dest_dir}")
 
+    install_bridge_md(home)
     install_hook(home)
+}
+
+fn install_bridge_md(home: Str) {
+    const BRIDGE_MD = #embed("../commands/bridge.md")
+    let bridge_path = "{home}/.claude/bridge.md"
+    write_file(bridge_path, BRIDGE_MD)
+    io.println("  Installed: bridge.md")
+
+    let claude_md_path = "{home}/.claude/CLAUDE.md"
+    if file_exists(claude_md_path) == 1 {
+        let content = read_file(claude_md_path)
+        if !content.contains("@bridge.md") {
+            write_file(claude_md_path, "{content}\n@bridge.md")
+            io.println("  Added @bridge.md to CLAUDE.md")
+        } else {
+            io.println("  CLAUDE.md: @bridge.md already present")
+        }
+    } else {
+        write_file(claude_md_path, "@bridge.md\n")
+        io.println("  Created CLAUDE.md with @bridge.md")
+    }
 }
 
 fn install_hook(home: Str) {
@@ -542,7 +564,26 @@ pub fn cmd_uninstall() {
         io.println("Removed {removed} commands")
     }
 
+    uninstall_bridge_md(home)
     uninstall_hook(home)
+}
+
+fn uninstall_bridge_md(home: Str) {
+    let bridge_path = "{home}/.claude/bridge.md"
+    if file_exists(bridge_path) == 1 {
+        process_run("rm", ["-f", bridge_path])
+        io.println("  Removed: bridge.md")
+    }
+
+    let claude_md_path = "{home}/.claude/CLAUDE.md"
+    if file_exists(claude_md_path) == 1 {
+        let content = read_file(claude_md_path)
+        if content.contains("@bridge.md") {
+            let updated = content.replace("\n@bridge.md", "").replace("@bridge.md\n", "")
+            write_file(claude_md_path, updated)
+            io.println("  Removed @bridge.md from CLAUDE.md")
+        }
+    }
 }
 
 fn uninstall_hook(home: Str) {
