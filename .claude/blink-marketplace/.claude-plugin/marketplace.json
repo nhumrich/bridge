@@ -1,0 +1,1 @@
+{"name":"blink-plugins","owner":{"name":"Blink"},"plugins":[{"name":"blink","source":"./plugins/blink","description":"Blink language support: LSP, skills, and tools"}]}

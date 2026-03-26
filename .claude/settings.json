@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "blink@blink-plugins": true
+  },
+  "extraKnownMarketplaces": {
+    "blink-plugins": {
+      "source": {
+        "source": "directory",
+        "path": "/home/nhumrich/personal/bridge/.claude/blink-marketplace"
+      }
+    }
+  }
+}

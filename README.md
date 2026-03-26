@@ -70,9 +70,9 @@ I also sometimes like to keep adding tasks this way in a loop, while a different
 
 ## Build from source
 
-Requires [Pact](https://github.com/nhumrich/pact).
+Requires [Blink](https://github.com/nhumrich/blink).
 ```sh
-pact build src/main.pact
+blink build src/main.bl
 cp build/main ~/.local/bin/br
 ```
 

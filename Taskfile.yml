@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  SRC: src/main.pact
+  SRC: src/main.bl
   BIN: build/main
   INSTALL_PATH: ~/.local/bin/br
 
@@ -9,9 +9,9 @@ tasks:
   build:
     desc: Build the bridge binary
     cmds:
-      - pact build {{.SRC}}
+      - blink build {{.SRC}}
     sources:
-      - src/*.pact
+      - src/*.bl
     generates:
       - "{{.BIN}}"
 
@@ -26,7 +26,7 @@ tasks:
   check:
     desc: Typecheck all source files
     cmds:
-      - pact check {{.SRC}}
+      - blink check {{.SRC}}
 
   clean:
     desc: Remove build artifacts
@@ -34,9 +34,9 @@ tasks:
       - rm -f {{.BIN}}
 
   test:
-    desc: Run pact tests
+    desc: Run blink tests
     cmds:
-      - pact test
+      - blink test
 
   ci:
     desc: Run all checks (typecheck + build)
@@ -54,17 +54,17 @@ tasks:
     desc: Cross-compile release binaries to dist/
     cmds:
       - mkdir -p dist
-      - pact build {{.SRC}} --release -T linux -o dist/br-linux-amd64
-      - pact build {{.SRC}} --release -T linux-arm64 -o dist/br-linux-arm64
-      - pact build {{.SRC}} --release -T macos -o dist/br-darwin-amd64
-      - pact build {{.SRC}} --release -T macos-arm64 -o dist/br-darwin-arm64
+      - blink build {{.SRC}} --release -T linux -o dist/br-linux-amd64
+      - blink build {{.SRC}} --release -T linux-arm64 -o dist/br-linux-arm64
+      - blink build {{.SRC}} --release -T macos -o dist/br-darwin-amd64
+      - blink build {{.SRC}} --release -T macos-arm64 -o dist/br-darwin-arm64
       - cd dist && sha256sum br-* > checksums.txt
       - echo "Release binaries in dist/"
 
   bump:
     desc: "Bump version (usage: task bump -- 0.2.0)"
     cmds:
-      - sed -i 's/^version = ".*"/version = "{{.CLI_ARGS}}"/' pact.toml
-      - sed -i 's/set_version(p, ".*")/set_version(p, "{{.CLI_ARGS}}")/' src/main.pact
+      - sed -i 's/^version = ".*"/version = "{{.CLI_ARGS}}"/' blink.toml
+      - sed -i 's/set_version(p, ".*")/set_version(p, "{{.CLI_ARGS}}")/' src/main.bl
       - 'sed -i ''s/"version": ".*"/"version": "{{.CLI_ARGS}}"/'' .claude-plugin/plugin.json'
       - echo "Bumped to v{{.CLI_ARGS}}"

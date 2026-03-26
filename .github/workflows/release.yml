@@ -12,17 +12,17 @@ jobs:
   release:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/nhumrich/pact:0.23
+      image: ghcr.io/blinklang/blink:latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Build binaries
         run: |
           mkdir -p dist
-          pact build src/main.pact --release -T linux -o dist/br-linux-amd64
-          pact build src/main.pact --release -T linux-arm64 -o dist/br-linux-arm64
-          pact build src/main.pact --release -T macos -o dist/br-darwin-amd64
-          pact build src/main.pact --release -T macos-arm64 -o dist/br-darwin-arm64
+          blink build src/main.bl --release -T linux -o dist/br-linux-amd64
+          blink build src/main.bl --release -T linux-arm64 -o dist/br-linux-arm64
+          blink build src/main.bl --release -T macos -o dist/br-darwin-amd64
+          blink build src/main.bl --release -T macos-arm64 -o dist/br-darwin-arm64
 
       - name: Checksums
         run: |

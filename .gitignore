@@ -1,6 +1,6 @@
 build/
 dist/
 .tmp/
-.pact/
+.blink/
 .task/
 .claude/settings.local.json
