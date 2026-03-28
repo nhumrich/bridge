@@ -7,13 +7,15 @@ on:
 
 permissions:
   contents: write
-  packages: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/blinklang/blink:0.29
+      credentials:
+        username: ""
+        password: ""
     steps:
       - uses: actions/checkout@v4
 
