@@ -16,6 +16,7 @@ jobs:
 
       - name: Build binaries
         run: |
+          docker logout ghcr.io || true
           docker pull ghcr.io/blinklang/blink:0.29
           mkdir -p dist
           docker run --rm -v "$PWD":/work -w /work ghcr.io/blinklang/blink:0.29 blink build src/main.bl --release -T linux -o dist/br-linux-amd64
