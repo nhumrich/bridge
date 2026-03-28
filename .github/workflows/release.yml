@@ -7,12 +7,13 @@ on:
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/blinklang/blink:latest
+      image: ghcr.io/blinklang/blink:0.29
     steps:
       - uses: actions/checkout@v4
 
