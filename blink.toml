@@ -1,7 +1,7 @@
 [package]
 name = "bridge"
-version = "0.2.1"
-blink-version = "0.26.0-dev+20260325212440"
+version = "0.4.0"
+blink-version = "0.29.0"
 
 [native-dependencies]
 sqlite3 = { path = "vendor/sqlite3/sqlite3.c" }

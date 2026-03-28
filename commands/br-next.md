@@ -42,4 +42,5 @@ Create an implementation plan:
 ## Best practices:
 - Use parallel file edits when tasks touch different files
 - Update br task status immediately before starting and after completing each task
-- If a task fails, leave it in_progress and report the issue to the user, and also note it by using `br edit --append`
+- Add notes when discovering important context: `br note <id> "finding"`
+- If a task fails, leave it in_progress and report the issue to the user, and also note it by using `br note <id> "what went wrong"`

@@ -1,8 +1,8 @@
 import db
-import ulid
-import display
-import std.json
-import std.path
+import ulid.{generate_id}
+import display.{short_id, format_task_line, format_task_detail, format_activity_line, format_note_line}
+import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
+import std.path.{path_join}
 
 fn list_contains(items: List[Str], target: Str) -> Bool {
     for item in items {
@@ -92,6 +92,18 @@ fn log_activity(task_id: Str, action: Str, session_id: Str) {
     db.exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ('{task_id}', '{action}', '{s}', '{p}')")
 }
 
+pub fn cmd_note(id_prefix: Str, content: Str) {
+    let id = resolve_id(id_prefix)
+    let c = sql_escape(content)
+    let project_path = get_env("PWD") ?? ""
+    let session_id = get_env("BR_SESSION_ID") ?? ""
+    let source = if session_id.is_empty() { "user" } else { "agent" }
+    let s = sql_escape(session_id)
+    let p = sql_escape(project_path)
+    db.exec("INSERT INTO task_notes (task_id, content, source, session_id, project_path) VALUES ('{id}', '{c}', '{source}', '{s}', '{p}')")
+    io.println("Note added to {short_id(id)}")
+}
+
 // --- CRUD Commands ---
 
 pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str], session_id: Str) {
@@ -143,6 +155,7 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     let id = resolve_id(id_prefix)
     let row_opt = db.query_one("SELECT id, title, description, status, priority, created_at, updated_at, closed_at FROM tasks WHERE id = '{id}'")
     let row = row_opt ?? []
+    let note_rows = db.query("SELECT content, source, session_id, project_path, created_at FROM task_notes WHERE task_id = '{id}' ORDER BY created_at ASC")
 
     if json_mode {
         let obj = json_new_object()
@@ -154,6 +167,17 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
             json_set(obj, name, json_new_str(val))
             ci = ci + 1
         }
+        let notes_arr = json_new_array()
+        for nr in note_rows {
+            let note_obj = json_new_object()
+            json_set(note_obj, "content", json_new_str(nr.get(0) ?? ""))
+            json_set(note_obj, "source", json_new_str(nr.get(1) ?? ""))
+            json_set(note_obj, "session_id", json_new_str(nr.get(2) ?? ""))
+            json_set(note_obj, "project_path", json_new_str(nr.get(3) ?? ""))
+            json_set(note_obj, "created_at", json_new_str(nr.get(4) ?? ""))
+            json_push(notes_arr, note_obj)
+        }
+        json_set(obj, "notes", notes_arr)
         io.println(json_encode(obj))
         return
     }
@@ -190,6 +214,17 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
             let apath = ar.get(2) ?? ""
             let aat = ar.get(3) ?? ""
             io.println(format_activity_line(aaction, asession, apath, aat))
+        }
+    }
+
+    if !note_rows.is_empty() {
+        io.println("  Notes:")
+        for nr in note_rows {
+            let ncontent = nr.get(0) ?? ""
+            let nsource = nr.get(1) ?? ""
+            let nsession = nr.get(2) ?? ""
+            let nat = nr.get(4) ?? ""
+            io.println(format_note_line(ncontent, nsource, nsession, nat))
         }
     }
 }
@@ -433,10 +468,11 @@ pub fn cmd_install() {
     const CMD_ADD = #embed("../commands/br-add.md")
     const CMD_CLOSE = #embed("../commands/br-close.md")
     const CMD_NEXT = #embed("../commands/br-next.md")
+    const CMD_NOTE = #embed("../commands/br-note.md")
     const CMD_PLAN = #embed("../commands/br-plan.md")
 
-    let names = ["br:add.md", "br:close.md", "br:next.md", "br:plan.md"]
-    let contents = [CMD_ADD, CMD_CLOSE, CMD_NEXT, CMD_PLAN]
+    let names = ["br:add.md", "br:close.md", "br:next.md", "br:note.md", "br:plan.md"]
+    let contents = [CMD_ADD, CMD_CLOSE, CMD_NEXT, CMD_NOTE, CMD_PLAN]
 
     let mut i = 0
     while i < names.len() {
@@ -548,7 +584,7 @@ fn install_hook(home: Str) {
 pub fn cmd_uninstall() {
     let home = get_env("HOME") ?? "/tmp"
     let dest_dir = "{home}/.claude/commands"
-    let names = ["br:add.md", "br:close.md", "br:next.md", "br:plan.md"]
+    let names = ["br:add.md", "br:close.md", "br:next.md", "br:note.md", "br:plan.md"]
     let mut removed = 0
     for name in names {
         let dest = path_join(dest_dir, name)

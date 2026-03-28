@@ -14,6 +14,7 @@ br add <title> [-p 0-4] [-t tag] [-d "description"]   # Create task (auto-tags r
 br ls [-s status] [-t tag] [-j]                        # List tasks (default: open)
 br ready [-t tag] [-j]                                 # Unblocked tasks only
 br show <id>                                           # Full task detail
+br note <id> "text"                                    # Add note to task
 br edit <id> [--title T] [--desc D] [-p N] [-s status] # Edit fields
 br start <id>                                          # Set status → in_progress
 br done <id>                                           # Set status → done

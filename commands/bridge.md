@@ -6,7 +6,8 @@ We track work in Bridge (`br`) — a global task manager. Run `br --help` to see
   2. Add tasks: `br add "task description" -p 0` (0=highest priority)
   3. Add dependencies: `br dep add <blocker> <blocked>` (first arg blocks second)
   4. Start work: `br start <id>`
-  5. Complete work: `br close <id>`
+  5. Add notes: `br note <id> "context or findings"`
+  6. Complete work: `br close <id>`
 
 ### br Best Practices
   - Break down complex tasks into multiple issues with dependencies

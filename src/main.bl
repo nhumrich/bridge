@@ -1,6 +1,6 @@
-import std.args
-import db
-import commands
+import std.args.{ArgParser, Args, argparser_new, set_version, add_flag, add_command, command_add_positional, command_add_option, command_add_flag, argparse, args_error, args_command, args_has, args_get, args_get_all, args_positional, args_positional_count, generate_help, generate_command_help}
+import db.{init_db}
+import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_start, cmd_stop, cmd_done, cmd_cancel, cmd_rm, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall}
 
 fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     let mut result: List[Str] = []
@@ -25,7 +25,7 @@ fn parse_priority(s: Str) -> Int {
 
 fn build_parser() -> ArgParser {
     let mut p = argparser_new("br", "Bridge Task Manager")
-    p = set_version(p, "0.2.1")
+    p = set_version(p, "0.4.0")
 
     p = add_flag(p, "--json", "-j", "JSON output")
 
@@ -53,6 +53,10 @@ fn build_parser() -> ArgParser {
 
     p = add_command(p, "show", "Show task details")
     p = command_add_positional(p, "show", "id", "Task ID prefix")
+
+    p = add_command(p, "note", "Add a note to a task")
+    p = command_add_positional(p, "note", "id", "Task ID prefix")
+    p = command_add_positional(p, "note", "content", "Note content")
 
     p = add_command(p, "edit", "Edit a task")
     p = command_add_positional(p, "edit", "id", "Task ID prefix")
@@ -160,6 +164,14 @@ fn main() {
             exit(1)
         }
         cmd_show(id, json_mode)
+    } else if cmd == "note" {
+        let id = args_positional(a, 0)
+        let content = args_positional(a, 1)
+        if id == "" || content == "" {
+            io.eprintln("Usage: br note <id> \"note text\"")
+            exit(1)
+        }
+        cmd_note(id, content)
     } else if cmd == "edit" {
         let id = args_positional(a, 0)
         if id == "" {

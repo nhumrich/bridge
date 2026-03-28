@@ -66,3 +66,11 @@ pub fn format_activity_line(action: Str, session_id: Str, project_path: Str, cre
     }
     parts.join("")
 }
+
+pub fn format_note_line(content: Str, source: Str, session_id: Str, created_at: Str) -> Str {
+    let mut header = "    [{source}] {created_at}"
+    if !session_id.is_empty() {
+        header = "{header}  session={session_id}"
+    }
+    "{header}\n      {content}"
+}
