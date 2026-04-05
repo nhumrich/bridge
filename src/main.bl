@@ -1,6 +1,6 @@
 import std.args.{ArgParser, Args, argparser_new, set_version, add_flag, add_command, command_add_positional, command_add_option, command_add_flag, argparse, args_error, args_command, args_has, args_get, args_get_all, args_positional, args_positional_count, generate_help, generate_command_help}
 import db.{init_db}
-import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_start, cmd_stop, cmd_done, cmd_cancel, cmd_rm, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall}
+import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_start, cmd_stop, cmd_done, cmd_cancel, cmd_rm, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall, cmd_graph}
 
 fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     let mut result: List[Str] = []
@@ -109,6 +109,11 @@ fn build_parser() -> ArgParser {
     p = add_command(p, "tags", "List all tags")
     p = add_command(p, "stats", "Show task statistics")
     p = command_add_option(p, "stats", "-t", "", "Filter by tag")
+    p = add_command(p, "graph", "Show dependency graph")
+    p = command_add_positional(p, "graph", "id", "Task ID prefix (optional)")
+    p = command_add_option(p, "graph", "-t", "", "Filter by tag")
+    p = command_add_flag(p, "graph", "--all", "-a", "Include done/cancelled tasks")
+
     p = add_command(p, "install", "Install Claude Code commands")
     p = add_command(p, "uninstall", "Remove Claude Code commands")
     p
@@ -266,6 +271,11 @@ fn main() {
     } else if cmd == "stats" {
         let tag_filters = args_get_all(a, "t")
         cmd_stats(tag_filters)
+    } else if cmd == "graph" {
+        let id = args_positional(a, 0)
+        let tag_filters = args_get_all(a, "t")
+        let show_all = args_has(a, "all")
+        cmd_graph(id, tag_filters, show_all)
     } else if cmd == "install" {
         cmd_install()
     } else if cmd == "uninstall" {

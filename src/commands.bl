@@ -397,6 +397,153 @@ pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
     }
 }
 
+// --- Graph Command ---
+
+fn map_get_list(m: Map[Str, List[Str]], key: Str) -> List[Str] {
+    if m.has(key) {
+        return m.get(key)
+    }
+    let empty: List[Str] = []
+    empty
+}
+
+fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, tasks: Map[Str, List[Str]], children: Map[Str, List[Str]], visited: Map[Str, Bool], target_id: Str) {
+    let row = map_get_list(tasks, task_id)
+    let title = row.get(0) ?? ""
+    let priority = (row.get(1) ?? "2").to_int()
+    let status = row.get(2) ?? ""
+    let tags = row.get(3) ?? ""
+    let line = format_task_line(task_id, title, priority, status, tags)
+
+    let connector = if is_root { "" } else if is_last { "└── " } else { "├── " }
+    let marker = if !target_id.is_empty() && task_id == target_id { "  <--" } else { "" }
+
+    let already_visited = visited.has(task_id)
+    let suffix = if already_visited { "  ..." } else { "" }
+
+    io.println("{prefix}{connector}{line}{marker}{suffix}")
+
+    if already_visited {
+        return
+    }
+    visited.set(task_id, true)
+
+    let child_list = map_get_list(children, task_id)
+    let mut i = 0
+    while i < child_list.len() {
+        let child_id = child_list.get(i) ?? ""
+        let child_is_last = i == child_list.len() - 1
+        let child_prefix = if is_root { prefix } else if is_last { "{prefix}    " } else { "{prefix}│   " }
+        render_tree(child_id, child_prefix, child_is_last, false, tasks, children, visited, target_id)
+        i = i + 1
+    }
+}
+
+pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
+    let mut where_parts: List[Str] = []
+    if !show_all {
+        where_parts.push("t.status NOT IN ('done', 'cancelled')")
+    }
+    for clause in build_tag_clauses(tag_filters) {
+        where_parts.push(clause)
+    }
+    let where_clause = if where_parts.is_empty() { "" } else { " WHERE {where_parts.join(" AND ")}" }
+    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{where_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
+    let rows = db.query(sql)
+
+    if rows.is_empty() {
+        io.println("No tasks found.")
+        return
+    }
+
+    let mut tasks: Map[Str, List[Str]] = Map()
+    for row in rows {
+        let id = row.get(0) ?? ""
+        tasks.set(id, [row.get(1) ?? "", row.get(2) ?? "2", row.get(3) ?? "", row.get(4) ?? ""])
+    }
+
+    let edge_rows = db.query("SELECT blocker_id, blocked_id FROM deps")
+
+    let target_id = if !id_prefix.is_empty() { resolve_id(id_prefix) } else { "" }
+
+    if !target_id.is_empty() {
+        let mut fwd: Map[Str, List[Str]] = Map()
+        let mut rev: Map[Str, List[Str]] = Map()
+        for er in edge_rows {
+            let blocker = er.get(0) ?? ""
+            let blocked = er.get(1) ?? ""
+            if tasks.has(blocker) && tasks.has(blocked) {
+                let mut fl = map_get_list(fwd, blocker)
+                fl.push(blocked)
+                fwd.set(blocker, fl)
+                let mut rl = map_get_list(rev, blocked)
+                rl.push(blocker)
+                rev.set(blocked, rl)
+            }
+        }
+
+        let mut component: Map[Str, Bool] = Map()
+        let mut stack: List[Str] = [target_id]
+        while !stack.is_empty() {
+            let current = stack.get(stack.len() - 1) ?? ""
+            stack.pop()
+            if !component.has(current) {
+                component.set(current, true)
+                let fwd_list = map_get_list(fwd, current)
+                for child in fwd_list {
+                    if !component.has(child) { stack.push(child) }
+                }
+                let rev_list = map_get_list(rev, current)
+                for parent in rev_list {
+                    if !component.has(parent) { stack.push(parent) }
+                }
+            }
+        }
+
+        let mut remove_ids: List[Str] = []
+        let all_ids = tasks.keys()
+        for tid in all_ids {
+            if !component.has(tid) {
+                remove_ids.push(tid)
+            }
+        }
+        for rid in remove_ids {
+            tasks.remove(rid)
+        }
+    }
+
+    let mut children: Map[Str, List[Str]] = Map()
+    let mut has_parent: Map[Str, Bool] = Map()
+    for er in edge_rows {
+        let blocker = er.get(0) ?? ""
+        let blocked = er.get(1) ?? ""
+        if tasks.has(blocker) && tasks.has(blocked) {
+            let mut child_list = map_get_list(children, blocker)
+            child_list.push(blocked)
+            children.set(blocker, child_list)
+            has_parent.set(blocked, true)
+        }
+    }
+
+    let mut roots: List[Str] = []
+    for row in rows {
+        let id = row.get(0) ?? ""
+        if tasks.has(id) && !has_parent.has(id) {
+            roots.push(id)
+        }
+    }
+
+    if roots.is_empty() {
+        io.println("No tasks found.")
+        return
+    }
+
+    let mut visited: Map[Str, Bool] = Map()
+    for root in roots {
+        render_tree(root, "", false, true, tasks, children, visited, target_id)
+    }
+}
+
 // --- Tag Commands ---
 
 pub fn cmd_tag(id_prefix: Str, tags: List[Str]) {
