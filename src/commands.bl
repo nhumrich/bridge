@@ -54,15 +54,29 @@ fn tags_for_task(task_id: Str) -> Str {
 }
 
 
-// SELECT t.id, t.title, t.priority, t.status, tags
-fn print_task_rows(rows: List[List[Str]]) {
+type TaskRow { id: Str, title: Str, priority: Int, status: Str, tags: Str }
+
+fn parse_task_row(row: List[Str]) -> TaskRow {
+    TaskRow {
+        id: row.get(0) ?? "",
+        title: row.get(1) ?? "",
+        priority: (row.get(2) ?? "2").to_int(),
+        status: row.get(3) ?? "",
+        tags: row.get(4) ?? ""
+    }
+}
+
+fn parse_task_rows(rows: List[List[Str]]) -> List[TaskRow] {
+    let mut result: List[TaskRow] = []
     for row in rows {
-        let id = row.get(0) ?? ""
-        let title = row.get(1) ?? ""
-        let priority = (row.get(2) ?? "2").to_int()
-        let status = row.get(3) ?? ""
-        let tags = row.get(4) ?? ""
-        io.println(format_task_line(id, title, priority, status, tags))
+        result.push(parse_task_row(row))
+    }
+    result
+}
+
+fn print_task_rows(task_rows: List[TaskRow]) {
+    for t in task_rows {
+        io.println(format_task_line(t.id, t.title, t.priority, t.status, t.tags))
     }
 }
 
@@ -148,7 +162,7 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_
         return
     }
 
-    print_task_rows(rows)
+    print_task_rows(parse_task_rows(rows))
 }
 
 pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
@@ -312,7 +326,7 @@ pub fn cmd_ready(tag_filters: List[Str], json_mode: Bool) {
         return
     }
 
-    print_task_rows(rows)
+    print_task_rows(parse_task_rows(rows))
 }
 
 fn has_cycle(from_id: Str, to_id: Str) -> Bool {
@@ -386,13 +400,9 @@ pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
     }
 
     for row in rows {
-        let id = row.get(0) ?? ""
-        let title = row.get(1) ?? ""
-        let priority = (row.get(2) ?? "2").to_int()
-        let status = row.get(3) ?? ""
-        let tags = row.get(4) ?? ""
+        let t = parse_task_row(row)
         let blockers = row.get(5) ?? ""
-        let line = format_task_line(id, title, priority, status, tags)
+        let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags)
         io.println("{line}  (blocked by: {blockers})")
     }
 }
@@ -407,6 +417,7 @@ fn map_get_list(m: Map[Str, List[Str]], key: Str) -> List[Str] {
     empty
 }
 
+
 type TreeCtx {
     tasks: Map[Str, List[Str]],
     children: Map[Str, List[Str]],
@@ -416,11 +427,8 @@ type TreeCtx {
 
 fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: TreeCtx) {
     let row = map_get_list(ctx.tasks, task_id)
-    let title = row.get(0) ?? ""
-    let priority = (row.get(1) ?? "2").to_int()
-    let status = row.get(2) ?? ""
-    let tags = row.get(3) ?? ""
-    let line = format_task_line(task_id, title, priority, status, tags)
+    let t = parse_task_row(row)
+    let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags)
 
     let connector = if is_root { "" } else if is_last { "└── " } else { "├── " }
     let marker = if !ctx.target_id.is_empty() && task_id == ctx.target_id { "  <--" } else { "" }
@@ -466,7 +474,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
     let mut tasks: Map[Str, List[Str]] = Map()
     for row in rows {
         let id = row.get(0) ?? ""
-        tasks.set(id, [row.get(1) ?? "", row.get(2) ?? "2", row.get(3) ?? "", row.get(4) ?? ""])
+        tasks.set(id, row)
     }
 
     let edge_rows = db.query("SELECT blocker_id, blocked_id FROM deps")
