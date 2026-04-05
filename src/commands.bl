@@ -407,8 +407,15 @@ fn map_get_list(m: Map[Str, List[Str]], key: Str) -> List[Str] {
     empty
 }
 
-fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, tasks: Map[Str, List[Str]], children: Map[Str, List[Str]], visited: Map[Str, Bool], target_id: Str) {
-    let row = map_get_list(tasks, task_id)
+type TreeCtx {
+    tasks: Map[Str, List[Str]],
+    children: Map[Str, List[Str]],
+    visited: Map[Str, Bool],
+    target_id: Str
+}
+
+fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: TreeCtx) {
+    let row = map_get_list(ctx.tasks, task_id)
     let title = row.get(0) ?? ""
     let priority = (row.get(1) ?? "2").to_int()
     let status = row.get(2) ?? ""
@@ -416,9 +423,9 @@ fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, tasks: M
     let line = format_task_line(task_id, title, priority, status, tags)
 
     let connector = if is_root { "" } else if is_last { "└── " } else { "├── " }
-    let marker = if !target_id.is_empty() && task_id == target_id { "  <--" } else { "" }
+    let marker = if !ctx.target_id.is_empty() && task_id == ctx.target_id { "  <--" } else { "" }
 
-    let already_visited = visited.has(task_id)
+    let already_visited = ctx.visited.has(task_id)
     let suffix = if already_visited { "  ..." } else { "" }
 
     io.println("{prefix}{connector}{line}{marker}{suffix}")
@@ -426,15 +433,15 @@ fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, tasks: M
     if already_visited {
         return
     }
-    visited.set(task_id, true)
+    ctx.visited.set(task_id, true)
 
-    let child_list = map_get_list(children, task_id)
+    let child_list = map_get_list(ctx.children, task_id)
     let mut i = 0
     while i < child_list.len() {
         let child_id = child_list.get(i) ?? ""
         let child_is_last = i == child_list.len() - 1
         let child_prefix = if is_root { prefix } else if is_last { "{prefix}    " } else { "{prefix}│   " }
-        render_tree(child_id, child_prefix, child_is_last, false, tasks, children, visited, target_id)
+        render_tree(child_id, child_prefix, child_is_last, false, ctx)
         i = i + 1
     }
 }
@@ -538,9 +545,14 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
         return
     }
 
-    let mut visited: Map[Str, Bool] = Map()
+    let ctx = TreeCtx {
+        tasks: tasks,
+        children: children,
+        visited: Map(),
+        target_id: target_id
+    }
     for root in roots {
-        render_tree(root, "", false, true, tasks, children, visited, target_id)
+        render_tree(root, "", false, true, ctx)
     }
 }
 
