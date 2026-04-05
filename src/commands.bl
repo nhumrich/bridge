@@ -118,9 +118,17 @@ pub fn cmd_note(id_prefix: Str, content: Str) {
     io.println("Note added to {short_id(id)}")
 }
 
+fn check_title_len(title: Str) {
+    if title.len() > 120 {
+        io.eprintln("Title too long (max 120 chars). Use -d for details.")
+        exit(1)
+    }
+}
+
 // --- CRUD Commands ---
 
 pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str], session_id: Str) {
+    check_title_len(title)
     let id = generate_id()
     let t = sql_escape(title)
     let d = sql_escape(description)
@@ -244,6 +252,9 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
 }
 
 pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, append: Bool) {
+    if !title.is_empty() {
+        check_title_len(title)
+    }
     let id = resolve_id(id_prefix)
     let mut sets: List[Str] = []
     if !title.is_empty() {

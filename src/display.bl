@@ -24,9 +24,10 @@ pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: S
     let sid = short_id(id)
     let pstr = format_priority(priority)
     let sstr = format_status(status)
+    let display_title = if title.len() > 72 { "{title.slice(0, 72)}..." } else { title }
     let mut tag_part = ""
     if !tags.is_empty() { tag_part = " [{tags}]" }
-    "{sstr} {sid}  {pstr}  {title}{tag_part}"
+    "{sstr} {sid}  {pstr}  {display_title}{tag_part}"
 }
 
 pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, priority: Int, created_at: Str, updated_at: Str, closed_at: Str, tags: Str, blocks: Str, blocked_by: Str) -> Str {
