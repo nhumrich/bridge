@@ -20,11 +20,16 @@ pub fn format_status(status: Str) -> Str {
     "[-]"
 }
 
+fn sanitize_title(title: Str) -> Str {
+    title.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+}
+
 pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: Str) -> Str {
     let sid = short_id(id)
     let pstr = format_priority(priority)
     let sstr = format_status(status)
-    let display_title = if title.len() > 72 { "{title.slice(0, 72)}..." } else { title }
+    let clean = sanitize_title(title)
+    let display_title = if clean.len() > 72 { "{clean.slice(0, 72)}..." } else { clean }
     let mut tag_part = ""
     if !tags.is_empty() { tag_part = " [{tags}]" }
     "{sstr} {sid}  {pstr}  {display_title}{tag_part}"
@@ -34,7 +39,7 @@ pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, pr
     let mut lines: List[Str] = []
     lines.push("Task: {short_id(id)}")
     lines.push("  Full ID:  {id}")
-    lines.push("  Title:    {title}")
+    lines.push("  Title:    {sanitize_title(title)}")
     lines.push("  Status:   {status}")
     lines.push("  Priority: {format_priority(priority)}")
     if !description.is_empty() {
