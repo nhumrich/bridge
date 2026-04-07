@@ -50,18 +50,10 @@ pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, pr
     }
     lines.push("  Status:   {status_line}")
     lines.push("  Priority: {format_priority(priority)}")
-    if !description.is_empty() {
-        lines.push("  Desc:     {description}")
-    }
-    if !tags.is_empty() {
-        lines.push("  Tags:     {tags}")
-    }
-    if !depends_on.is_empty() {
-        lines.push("  Depends on: {depends_on}")
-    }
-    if !blocks.is_empty() {
-        lines.push("  Blocks:   {blocks}")
-    }
+    lines.push("  Desc:     {description}")
+    lines.push("  Tags:     {tags}")
+    lines.push("  Depends on: {depends_on}")
+    lines.push("  Blocks:   {blocks}")
     lines.push("  Created:  {created_at}")
     lines.push("  Updated:  {updated_at}")
     if !closed_at.is_empty() {
