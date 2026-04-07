@@ -4,7 +4,7 @@ import display.{short_id, format_task_line, format_task_detail, format_activity_
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
 import std.path.{path_join}
 
-fn list_contains(items: List[Str], target: Str) -> Bool {
+pub fn list_contains(items: List[Str], target: Str) -> Bool {
     for item in items {
         if item == target {
             return true
@@ -13,11 +13,11 @@ fn list_contains(items: List[Str], target: Str) -> Bool {
     false
 }
 
-fn sql_escape(s: Str) -> Str {
+pub fn sql_escape(s: Str) -> Str {
     s.replace("'", "''")
 }
 
-fn build_tag_clauses(tag_filters: List[Str]) -> List[Str] {
+pub fn build_tag_clauses(tag_filters: List[Str]) -> List[Str] {
     let mut clauses: List[Str] = []
     for tag in tag_filters {
         let tf = sql_escape(tag)
@@ -220,12 +220,15 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     }
 
     let blocked_by_rows = db.query("SELECT blocker_id FROM deps WHERE blocked_id = '{id}'")
-    let mut blocked_by_list: List[Str] = []
+    let mut depends_on_list: List[Str] = []
     for bbr in blocked_by_rows {
-        blocked_by_list.push(short_id(bbr.get(0) ?? ""))
+        depends_on_list.push(short_id(bbr.get(0) ?? ""))
     }
 
-    io.println(format_task_detail(id, title, description, status, priority, created_at, updated_at, closed_at, tags, blocks_list.join(", "), blocked_by_list.join(", ")))
+    let unresolved = db.query("SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = '{id}' AND blocker.status NOT IN ('done', 'cancelled') LIMIT 1")
+    let is_blocked = !unresolved.is_empty()
+
+    io.println(format_task_detail(id, title, description, status, priority, created_at, updated_at, closed_at, tags, blocks_list.join(", "), depends_on_list.join(", "), is_blocked))
 
     let activity_rows = db.query("SELECT action, session_id, project_path, created_at FROM activity_log WHERE task_id = '{id}' ORDER BY created_at ASC")
     if !activity_rows.is_empty() {
@@ -324,7 +327,7 @@ pub fn cmd_ready(tag_filters: List[Str], json_mode: Bool) {
     if !tag_clauses.is_empty() {
         tag_clause = " AND {tag_clauses.join(" AND ")}"
     }
-    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status = 'open' AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){tag_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
+    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){tag_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
     let rows = db.query(sql)
 
     if json_mode {

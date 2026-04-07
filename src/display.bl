@@ -35,12 +35,20 @@ pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: S
     "{sstr} {sid}  {pstr}  {display_title}{tag_part}"
 }
 
-pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, priority: Int, created_at: Str, updated_at: Str, closed_at: Str, tags: Str, blocks: Str, blocked_by: Str) -> Str {
+pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, priority: Int, created_at: Str, updated_at: Str, closed_at: Str, tags: Str, blocks: Str, depends_on: Str, is_blocked: Bool) -> Str {
     let mut lines: List[Str] = []
     lines.push("Task: {short_id(id)}")
     lines.push("  Full ID:  {id}")
     lines.push("  Title:    {sanitize_title(title)}")
-    lines.push("  Status:   {status}")
+    let mut status_line = status
+    if status == "open" || status == "in_progress" {
+        if is_blocked {
+            status_line = "{status} (blocked)"
+        } else {
+            status_line = "{status} (ready)"
+        }
+    }
+    lines.push("  Status:   {status_line}")
     lines.push("  Priority: {format_priority(priority)}")
     if !description.is_empty() {
         lines.push("  Desc:     {description}")
@@ -48,8 +56,8 @@ pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, pr
     if !tags.is_empty() {
         lines.push("  Tags:     {tags}")
     }
-    if !blocked_by.is_empty() {
-        lines.push("  Blocked:  {blocked_by}")
+    if !depends_on.is_empty() {
+        lines.push("  Depends on: {depends_on}")
     }
     if !blocks.is_empty() {
         lines.push("  Blocks:   {blocks}")
