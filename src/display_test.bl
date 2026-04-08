@@ -1,0 +1,80 @@
+import display.{short_id, format_priority, format_status, format_task_line}
+
+test "short_id truncates long ids" {
+    assert_eq(short_id("01ABCDEF99XYZWWW"), "01ABCDEF")
+}
+
+test "short_id keeps 8-char id" {
+    assert_eq(short_id("ABCDEFGH"), "ABCDEFGH")
+}
+
+test "short_id keeps short id" {
+    assert_eq(short_id("ABC"), "ABC")
+}
+
+test "short_id empty string" {
+    assert_eq(short_id(""), "")
+}
+
+test "format_priority P0" {
+    assert_eq(format_priority(0), "P0")
+}
+
+test "format_priority P1" {
+    assert_eq(format_priority(1), "P1")
+}
+
+test "format_priority P2" {
+    assert_eq(format_priority(2), "P2")
+}
+
+test "format_priority P3" {
+    assert_eq(format_priority(3), "P3")
+}
+
+test "format_priority P4 default" {
+    assert_eq(format_priority(4), "P4")
+    assert_eq(format_priority(99), "P4")
+}
+
+test "format_status open" {
+    assert_eq(format_status("open"), "[ ]")
+}
+
+test "format_status in_progress" {
+    assert_eq(format_status("in_progress"), "[~]")
+}
+
+test "format_status done" {
+    assert_eq(format_status("done"), "[x]")
+}
+
+test "format_status cancelled" {
+    assert_eq(format_status("cancelled"), "[-]")
+}
+
+test "format_status unknown falls to default" {
+    assert_eq(format_status("bogus"), "[-]")
+}
+
+test "format_task_line basic with tags" {
+    let result = format_task_line("01ABCDEF99XYZWWW", "Fix the thing", 1, "open", "bug,urgent")
+    assert_eq(result, "[ ] 01ABCDEF  P1  Fix the thing [bug,urgent]")
+}
+
+test "format_task_line no tags" {
+    let result = format_task_line("01ABCDEF99XYZWWW", "Fix the thing", 2, "done", "")
+    assert_eq(result, "[x] 01ABCDEF  P2  Fix the thing")
+}
+
+test "format_task_line truncates long title" {
+    let long_title = "This is a very long task title that definitely exceeds seventy-two characters and should be truncated"
+    let result = format_task_line("01ABCDEF99", long_title, 0, "open", "")
+    assert(result.contains("..."))
+    assert(!result.contains("truncated"))
+}
+
+test "format_task_line sanitizes newlines and tabs" {
+    let result = format_task_line("01ABCDEF99", "line1\nline2\ttab", 3, "in_progress", "")
+    assert_eq(result, "[~] 01ABCDEF  P3  line1 line2 tab")
+}

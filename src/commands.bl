@@ -1,4 +1,4 @@
-import db
+import std.db
 import ulid.{generate_id}
 import display.{short_id, format_task_line, format_task_detail, format_activity_line, format_note_line}
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
@@ -27,8 +27,8 @@ pub fn build_tag_clauses(tag_filters: List[Str]) -> List[Str] {
 }
 
 pub fn resolve_id(prefix: Str) -> Str {
-    let escaped = sql_escape(prefix.to_lower())
-    let rows = db.query("SELECT id FROM tasks WHERE id LIKE '{escaped}%%'")
+    let pattern = "{prefix.to_lower()}%"
+    let rows = db.query("SELECT id FROM tasks WHERE id LIKE {pattern}").unwrap()
     if rows.is_empty() {
         io.eprintln("No task matches prefix: {prefix}")
         exit(1)
@@ -37,15 +37,15 @@ pub fn resolve_id(prefix: Str) -> Str {
         io.eprintln("Ambiguous prefix '{prefix}', multiple matches")
         exit(1)
     }
-    let row = rows.get(0) ?? []
-    row.get(0) ?? ""
+    let row = rows.get(0).unwrap()
+    row.get_at(0) ?? ""
 }
 
 fn tags_for_task(task_id: Str) -> Str {
-    let rows = db.query("SELECT tag FROM tags WHERE task_id = '{task_id}'")
+    let rows = db.query("SELECT tag FROM tags WHERE task_id = {task_id}").unwrap()
     let mut tags: List[Str] = []
     for row in rows {
-        let tag = row.get(0) ?? ""
+        let tag = row.get_at(0) ?? ""
         if !tag.is_empty() {
             tags.push(tag)
         }
@@ -56,17 +56,17 @@ fn tags_for_task(task_id: Str) -> Str {
 
 type TaskRow { id: Str, title: Str, priority: Int, status: Str, tags: Str }
 
-fn parse_task_row(row: List[Str]) -> TaskRow {
+fn parse_task_row(row: Row) -> TaskRow {
     TaskRow {
-        id: row.get(0) ?? "",
-        title: row.get(1) ?? "",
-        priority: (row.get(2) ?? "2").to_int(),
-        status: row.get(3) ?? "",
-        tags: row.get(4) ?? ""
+        id: row.get_at(0) ?? "",
+        title: row.get_at(1) ?? "",
+        priority: (row.get_at(2) ?? "2").to_int(),
+        status: row.get_at(3) ?? "",
+        tags: row.get_at(4) ?? ""
     }
 }
 
-fn parse_task_rows(rows: List[List[Str]]) -> List[TaskRow] {
+fn parse_task_rows(rows: List[Row]) -> List[TaskRow] {
     let mut result: List[TaskRow] = []
     for row in rows {
         result.push(parse_task_row(row))
@@ -80,14 +80,14 @@ fn print_task_rows(task_rows: List[TaskRow]) {
     }
 }
 
-fn rows_to_json(rows: List[List[Str]], col_names: List[Str]) -> Str {
+fn rows_to_json(rows: List[Row], col_names: List[Str]) -> Str {
     let arr = json_new_array()
     for row in rows {
         let obj = json_new_object()
         let mut ci = 0
         while ci < col_names.len() {
             let name = col_names.get(ci) ?? ""
-            let val = row.get(ci) ?? ""
+            let val = row.get_at(ci) ?? ""
             json_set(obj, name, json_new_str(val))
             ci = ci + 1
         }
@@ -101,20 +101,15 @@ fn rows_to_json(rows: List[List[Str]], col_names: List[Str]) -> Str {
 fn log_activity(task_id: Str, action: Str, session_id: Str) {
     let project_path = get_env("PWD") ?? ""
     let sid = get_env("BR_SESSION_ID") ?? session_id
-    let s = sql_escape(sid)
-    let p = sql_escape(project_path)
-    db.exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ('{task_id}', '{action}', '{s}', '{p}')")
+    db.exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ({task_id}, {action}, {sid}, {project_path})").unwrap()
 }
 
 pub fn cmd_note(id_prefix: Str, content: Str) {
     let id = resolve_id(id_prefix)
-    let c = sql_escape(content)
     let project_path = get_env("PWD") ?? ""
     let session_id = get_env("BR_SESSION_ID") ?? ""
     let source = if session_id.is_empty() { "user" } else { "agent" }
-    let s = sql_escape(session_id)
-    let p = sql_escape(project_path)
-    db.exec("INSERT INTO task_notes (task_id, content, source, session_id, project_path) VALUES ('{id}', '{c}', '{source}', '{s}', '{p}')")
+    db.exec("INSERT INTO task_notes (task_id, content, source, session_id, project_path) VALUES ({id}, {content}, {source}, {session_id}, {project_path})").unwrap()
     io.println("Note added to {short_id(id)}")
 }
 
@@ -130,13 +125,10 @@ fn check_title_len(title: Str) {
 pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str], session_id: Str) {
     check_title_len(title)
     let id = generate_id()
-    let t = sql_escape(title)
-    let d = sql_escape(description)
-    db.exec("INSERT INTO tasks (id, title, description, priority) VALUES ('{id}', '{t}', '{d}', {priority})")
+    db.exec("INSERT INTO tasks (id, title, description, priority) VALUES ({id}, {title}, {description}, {priority})").unwrap()
 
     for tag in tag_list {
-        let tg = sql_escape(tag)
-        db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ('{id}', '{tg}')")
+        db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ({id}, {tag})").unwrap()
     }
 
     log_activity(id, "created", session_id)
@@ -157,8 +149,7 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_
         where_parts.push(clause)
     }
     let where_clause = if where_parts.len() == 0 { "" } else { " WHERE {where_parts.join(" AND ")}" }
-    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{where_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
-    let rows = db.query(sql)
+    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
     if json_mode {
         io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags"]))
@@ -175,9 +166,8 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_
 
 pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     let id = resolve_id(id_prefix)
-    let row_opt = db.query_one("SELECT id, title, description, status, priority, created_at, updated_at, closed_at FROM tasks WHERE id = '{id}'")
-    let row = row_opt ?? []
-    let note_rows = db.query("SELECT content, source, session_id, project_path, created_at FROM task_notes WHERE task_id = '{id}' ORDER BY created_at ASC")
+    let row = db.query_one("SELECT id, title, description, status, priority, created_at, updated_at, closed_at FROM tasks WHERE id = {id}").unwrap().unwrap()
+    let note_rows = db.query("SELECT content, source, session_id, project_path, created_at FROM task_notes WHERE task_id = {id} ORDER BY created_at ASC").unwrap()
 
     if json_mode {
         let obj = json_new_object()
@@ -185,18 +175,18 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
         let mut ci = 0
         while ci < names.len() {
             let name = names.get(ci) ?? ""
-            let val = row.get(ci) ?? ""
+            let val = row.get_at(ci) ?? ""
             json_set(obj, name, json_new_str(val))
             ci = ci + 1
         }
         let notes_arr = json_new_array()
         for nr in note_rows {
             let note_obj = json_new_object()
-            json_set(note_obj, "content", json_new_str(nr.get(0) ?? ""))
-            json_set(note_obj, "source", json_new_str(nr.get(1) ?? ""))
-            json_set(note_obj, "session_id", json_new_str(nr.get(2) ?? ""))
-            json_set(note_obj, "project_path", json_new_str(nr.get(3) ?? ""))
-            json_set(note_obj, "created_at", json_new_str(nr.get(4) ?? ""))
+            json_set(note_obj, "content", json_new_str(nr.get_at(0) ?? ""))
+            json_set(note_obj, "source", json_new_str(nr.get_at(1) ?? ""))
+            json_set(note_obj, "session_id", json_new_str(nr.get_at(2) ?? ""))
+            json_set(note_obj, "project_path", json_new_str(nr.get_at(3) ?? ""))
+            json_set(note_obj, "created_at", json_new_str(nr.get_at(4) ?? ""))
             json_push(notes_arr, note_obj)
         }
         json_set(obj, "notes", notes_arr)
@@ -204,40 +194,40 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
         return
     }
 
-    let title = row.get(1) ?? ""
-    let description = row.get(2) ?? ""
-    let status = row.get(3) ?? ""
-    let priority = (row.get(4) ?? "2").to_int()
-    let created_at = row.get(5) ?? ""
-    let updated_at = row.get(6) ?? ""
-    let closed_at = row.get(7) ?? ""
+    let title = row.get_at(1) ?? ""
+    let description = row.get_at(2) ?? ""
+    let status = row.get_at(3) ?? ""
+    let priority = (row.get_at(4) ?? "2").to_int()
+    let created_at = row.get_at(5) ?? ""
+    let updated_at = row.get_at(6) ?? ""
+    let closed_at = row.get_at(7) ?? ""
     let tags = tags_for_task(id)
 
-    let blocks_rows = db.query("SELECT blocked_id FROM deps WHERE blocker_id = '{id}'")
+    let blocks_rows = db.query("SELECT blocked_id FROM deps WHERE blocker_id = {id}").unwrap()
     let mut blocks_list: List[Str] = []
     for br in blocks_rows {
-        blocks_list.push(short_id(br.get(0) ?? ""))
+        blocks_list.push(short_id(br.get_at(0) ?? ""))
     }
 
-    let blocked_by_rows = db.query("SELECT blocker_id FROM deps WHERE blocked_id = '{id}'")
+    let blocked_by_rows = db.query("SELECT blocker_id FROM deps WHERE blocked_id = {id}").unwrap()
     let mut depends_on_list: List[Str] = []
     for bbr in blocked_by_rows {
-        depends_on_list.push(short_id(bbr.get(0) ?? ""))
+        depends_on_list.push(short_id(bbr.get_at(0) ?? ""))
     }
 
-    let unresolved = db.query("SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = '{id}' AND blocker.status NOT IN ('done', 'cancelled') LIMIT 1")
+    let unresolved = db.query("SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = {id} AND blocker.status NOT IN ('done', 'cancelled') LIMIT 1").unwrap()
     let is_blocked = !unresolved.is_empty()
 
     io.println(format_task_detail(id, title, description, status, priority, created_at, updated_at, closed_at, tags, blocks_list.join(", "), depends_on_list.join(", "), is_blocked))
 
-    let activity_rows = db.query("SELECT action, session_id, project_path, created_at FROM activity_log WHERE task_id = '{id}' ORDER BY created_at ASC")
+    let activity_rows = db.query("SELECT action, session_id, project_path, created_at FROM activity_log WHERE task_id = {id} ORDER BY created_at ASC").unwrap()
     if !activity_rows.is_empty() {
         io.println("  Activity:")
         for ar in activity_rows {
-            let aaction = ar.get(0) ?? ""
-            let asession = ar.get(1) ?? ""
-            let apath = ar.get(2) ?? ""
-            let aat = ar.get(3) ?? ""
+            let aaction = ar.get_at(0) ?? ""
+            let asession = ar.get_at(1) ?? ""
+            let apath = ar.get_at(2) ?? ""
+            let aat = ar.get_at(3) ?? ""
             io.println(format_activity_line(aaction, asession, apath, aat))
         }
     }
@@ -245,10 +235,10 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     if !note_rows.is_empty() {
         io.println("  Notes:")
         for nr in note_rows {
-            let ncontent = nr.get(0) ?? ""
-            let nsource = nr.get(1) ?? ""
-            let nsession = nr.get(2) ?? ""
-            let nat = nr.get(4) ?? ""
+            let ncontent = nr.get_at(0) ?? ""
+            let nsource = nr.get_at(1) ?? ""
+            let nsession = nr.get_at(2) ?? ""
+            let nat = nr.get_at(4) ?? ""
             io.println(format_note_line(ncontent, nsource, nsession, nat))
         }
     }
@@ -285,7 +275,7 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
     }
     sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
     let set_clause = sets.join(", ")
-    db.exec("UPDATE tasks SET {set_clause} WHERE id = '{id}'")
+    db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
     io.println("Updated: {short_id(id)}")
 }
 
@@ -315,7 +305,7 @@ pub fn cmd_cancel(id_prefix: Str, session_id: Str) {
 
 pub fn cmd_rm(id_prefix: Str) {
     let id = resolve_id(id_prefix)
-    db.exec("DELETE FROM tasks WHERE id = '{id}'")
+    db.exec("DELETE FROM tasks WHERE id = {id}").unwrap()
     io.println("Deleted: {short_id(id)}")
 }
 
@@ -327,8 +317,7 @@ pub fn cmd_ready(tag_filters: List[Str], json_mode: Bool) {
     if !tag_clauses.is_empty() {
         tag_clause = " AND {tag_clauses.join(" AND ")}"
     }
-    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){tag_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
-    let rows = db.query(sql)
+    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
     if json_mode {
         io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags"]))
@@ -357,9 +346,9 @@ fn has_cycle(from_id: Str, to_id: Str) -> Bool {
             // already visited
         } else {
             visited.push(current)
-            let deps_rows = db.query("SELECT blocked_id FROM deps WHERE blocker_id = '{current}'")
+            let deps_rows = db.query("SELECT blocked_id FROM deps WHERE blocker_id = {current}").unwrap()
             for dr in deps_rows {
-                let did = dr.get(0) ?? ""
+                let did = dr.get_at(0) ?? ""
                 if !did.is_empty() {
                     stack.push(did)
                 }
@@ -383,14 +372,14 @@ pub fn cmd_dep_add(blocker_prefix: Str, blocked_prefix: Str) {
         exit(1)
     }
 
-    db.exec("INSERT OR IGNORE INTO deps (blocker_id, blocked_id) VALUES ('{blocker_id}', '{blocked_id}')")
+    db.exec("INSERT OR IGNORE INTO deps (blocker_id, blocked_id) VALUES ({blocker_id}, {blocked_id})").unwrap()
     io.println("Added: {short_id(blocker_id)} blocks {short_id(blocked_id)}")
 }
 
 pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) {
     let blocker_id = resolve_id(blocker_prefix)
     let blocked_id = resolve_id(blocked_prefix)
-    db.exec("DELETE FROM deps WHERE blocker_id = '{blocker_id}' AND blocked_id = '{blocked_id}'")
+    db.exec("DELETE FROM deps WHERE blocker_id = {blocker_id} AND blocked_id = {blocked_id}").unwrap()
     io.println("Removed: {short_id(blocker_id)} no longer blocks {short_id(blocked_id)}")
 }
 
@@ -400,8 +389,7 @@ pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
     if !tag_clauses.is_empty() {
         tag_clause = " AND {tag_clauses.join(" AND ")}"
     }
-    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){tag_clause} GROUP BY t.id ORDER BY t.priority ASC"
-    let rows = db.query(sql)
+    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC").unwrap()
 
     if json_mode {
         io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags", "blockers"]))
@@ -415,7 +403,7 @@ pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
 
     for row in rows {
         let t = parse_task_row(row)
-        let blockers = row.get(5) ?? ""
+        let blockers = row.get_at(5) ?? ""
         let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags)
         io.println("{line}  (blocked by: {blockers})")
     }
@@ -433,14 +421,14 @@ fn map_get_list(m: Map[Str, List[Str]], key: Str) -> List[Str] {
 
 
 type TreeCtx {
-    tasks: Map[Str, List[Str]],
+    tasks: Map[Str, Row],
     children: Map[Str, List[Str]],
     visited: Map[Str, Bool],
     target_id: Str
 }
 
 fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: TreeCtx) {
-    let row = map_get_list(ctx.tasks, task_id)
+    let row = ctx.tasks.get(task_id)
     let t = parse_task_row(row)
     let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags)
 
@@ -477,21 +465,20 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
         where_parts.push(clause)
     }
     let where_clause = if where_parts.is_empty() { "" } else { " WHERE {where_parts.join(" AND ")}" }
-    let sql = "SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{where_clause} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC"
-    let rows = db.query(sql)
+    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
     if rows.is_empty() {
         io.println("No tasks found.")
         return
     }
 
-    let mut tasks: Map[Str, List[Str]] = Map()
+    let mut tasks: Map[Str, Row] = Map()
     for row in rows {
-        let id = row.get(0) ?? ""
+        let id = row.get_at(0) ?? ""
         tasks.set(id, row)
     }
 
-    let edge_rows = db.query("SELECT blocker_id, blocked_id FROM deps")
+    let edge_rows = db.query("SELECT blocker_id, blocked_id FROM deps").unwrap()
 
     let target_id = if !id_prefix.is_empty() { resolve_id(id_prefix) } else { "" }
 
@@ -499,8 +486,8 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
         let mut fwd: Map[Str, List[Str]] = Map()
         let mut rev: Map[Str, List[Str]] = Map()
         for er in edge_rows {
-            let blocker = er.get(0) ?? ""
-            let blocked = er.get(1) ?? ""
+            let blocker = er.get_at(0) ?? ""
+            let blocked = er.get_at(1) ?? ""
             if tasks.has(blocker) && tasks.has(blocked) {
                 let mut fl = map_get_list(fwd, blocker)
                 fl.push(blocked)
@@ -544,8 +531,8 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
     let mut children: Map[Str, List[Str]] = Map()
     let mut has_parent: Map[Str, Bool] = Map()
     for er in edge_rows {
-        let blocker = er.get(0) ?? ""
-        let blocked = er.get(1) ?? ""
+        let blocker = er.get_at(0) ?? ""
+        let blocked = er.get_at(1) ?? ""
         if tasks.has(blocker) && tasks.has(blocked) {
             let mut child_list = map_get_list(children, blocker)
             child_list.push(blocked)
@@ -556,7 +543,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
 
     let mut roots: List[Str] = []
     for row in rows {
-        let id = row.get(0) ?? ""
+        let id = row.get_at(0) ?? ""
         if tasks.has(id) && !has_parent.has(id) {
             roots.push(id)
         }
@@ -583,8 +570,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
 pub fn cmd_tag(id_prefix: Str, tags: List[Str]) {
     let id = resolve_id(id_prefix)
     for tag in tags {
-        let tg = sql_escape(tag)
-        db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ('{id}', '{tg}')")
+        db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ({id}, {tag})").unwrap()
     }
     io.println("Tagged: {short_id(id)}")
 }
@@ -592,21 +578,20 @@ pub fn cmd_tag(id_prefix: Str, tags: List[Str]) {
 pub fn cmd_untag(id_prefix: Str, tags: List[Str]) {
     let id = resolve_id(id_prefix)
     for tag in tags {
-        let tg = sql_escape(tag)
-        db.exec("DELETE FROM tags WHERE task_id = '{id}' AND tag = '{tg}'")
+        db.exec("DELETE FROM tags WHERE task_id = {id} AND tag = {tag}").unwrap()
     }
     io.println("Untagged: {short_id(id)}")
 }
 
 pub fn cmd_tags() {
-    let rows = db.query("SELECT tag, COUNT(*) as count FROM tags GROUP BY tag ORDER BY count DESC, tag ASC")
+    let rows = db.query("SELECT tag, COUNT(*) as count FROM tags GROUP BY tag ORDER BY count DESC, tag ASC").unwrap()
     if rows.is_empty() {
         io.println("No tags found.")
         return
     }
     for row in rows {
-        let tag = row.get(0) ?? ""
-        let cnt = (row.get(1) ?? "0").to_int()
+        let tag = row.get_at(0) ?? ""
+        let cnt = (row.get_at(1) ?? "0").to_int()
         io.println("  {tag}  ({cnt})")
     }
 }
@@ -623,17 +608,194 @@ pub fn cmd_stats(tag_filters: List[Str]) {
     }
     let tag_join = tag_joins.join("")
     let tag_where = if tag_wheres.is_empty() { "" } else { " WHERE {tag_wheres.join(" AND ")}" }
-    let rows = db.query("SELECT t.status, COUNT(*) as count FROM tasks t{tag_join}{tag_where} GROUP BY t.status ORDER BY t.status")
+    let rows = db.query("SELECT t.status, COUNT(*) as count FROM tasks t{Raw(tag_join)}{Raw(tag_where)} GROUP BY t.status ORDER BY t.status").unwrap()
     if rows.is_empty() {
         io.println("No tasks.")
         return
     }
     io.println("Tasks:")
     for row in rows {
-        let status = row.get(0) ?? ""
-        let cnt = (row.get(1) ?? "0").to_int()
+        let status = row.get_at(0) ?? ""
+        let cnt = (row.get_at(1) ?? "0").to_int()
         io.println("  {status}: {cnt}")
     }
+}
+
+pub fn cmd_vi(id_prefix: Str) {
+    let id = resolve_id(id_prefix)
+    let sid = short_id(id)
+
+    let row = db.query_one("SELECT title, description, status, priority FROM tasks WHERE id = {id}").unwrap().unwrap()
+    let old_title = row.get_at(0) ?? ""
+    let old_desc = row.get_at(1) ?? ""
+    let old_status = row.get_at(2) ?? "open"
+    let old_priority = (row.get_at(3) ?? "2").to_int()
+
+    let tag_rows = db.query("SELECT tag FROM tags WHERE task_id = {id} ORDER BY tag ASC").unwrap()
+    let mut old_tags: List[Str] = []
+    for tr in tag_rows {
+        let t = tr.get_at(0) ?? ""
+        if !t.is_empty() { old_tags.push(t) }
+    }
+    let old_tags_str = old_tags.join(", ")
+
+    let mut lines: List[Str] = []
+    lines.push("# Edit task {sid}. Lines starting with # are ignored.")
+    lines.push("# Fields: title, priority (P0-P4), status (open/in_progress/done/cancelled), tags (comma-separated)")
+    lines.push("# Everything below --- is the description (freeform).")
+    lines.push("title: {old_title}")
+    lines.push("priority: P{old_priority}")
+    lines.push("status: {old_status}")
+    lines.push("tags: {old_tags_str}")
+    lines.push("---")
+    lines.push(old_desc)
+    let content = lines.join("\n")
+
+    let tmp_path = "/tmp/br-edit-{sid}.txt"
+    write_file(tmp_path, content)
+
+    let editor = get_env("EDITOR") ?? "vi"
+    let exit_code = shell_exec("{editor} {tmp_path}")
+    if exit_code != 0 {
+        process_run("rm", ["-f", tmp_path])
+        io.eprintln("Editor exited with error, aborting.")
+        exit(1)
+    }
+
+    let new_content = read_file(tmp_path)
+    process_run("rm", ["-f", tmp_path])
+
+    if new_content.trim() == content.trim() {
+        io.println("Nothing changed.")
+        return
+    }
+
+    let mut header = ""
+    let mut body = ""
+    let sep_idx = new_content.index_of("\n---\n")
+    if sep_idx >= 0 {
+        header = new_content.slice(0, sep_idx)
+        body = new_content.slice(sep_idx + 5, new_content.len())
+    } else if new_content.ends_with("\n---") {
+        header = new_content.slice(0, new_content.len() - 4)
+        body = ""
+    } else {
+        header = new_content
+        body = ""
+    }
+
+    let mut new_title = ""
+    let mut new_priority = -1
+    let mut new_status = ""
+    let mut new_tags_str = ""
+
+    let header_lines = header.lines()
+    for line in header_lines {
+        let trimmed = line.trim()
+        if trimmed.is_empty() || trimmed.starts_with("#") {
+            // skip
+        } else if trimmed.starts_with("title:") {
+            new_title = trimmed.slice(6, trimmed.len()).trim()
+        } else if trimmed.starts_with("priority:") {
+            let pval = trimmed.slice(9, trimmed.len()).trim().to_upper()
+            if pval.starts_with("P") {
+                new_priority = pval.slice(1, pval.len()).to_int()
+            } else {
+                new_priority = pval.to_int()
+            }
+        } else if trimmed.starts_with("status:") {
+            new_status = trimmed.slice(7, trimmed.len()).trim()
+        } else if trimmed.starts_with("tags:") {
+            new_tags_str = trimmed.slice(5, trimmed.len()).trim()
+        }
+    }
+
+    let new_desc = body.trim()
+
+    if new_title.is_empty() {
+        io.eprintln("Error: title cannot be empty")
+        exit(1)
+    }
+    check_title_len(new_title)
+
+    let valid_statuses = ["open", "in_progress", "done", "cancelled"]
+    if !new_status.is_empty() && !list_contains(valid_statuses, new_status) {
+        io.eprintln("Invalid status: {new_status} (must be open, in_progress, done, or cancelled)")
+        exit(1)
+    }
+
+    if new_priority < 0 || new_priority > 4 {
+        io.eprintln("Invalid priority: must be P0-P4")
+        exit(1)
+    }
+
+    let mut sets: List[Str] = []
+    let mut changes: List[Str] = []
+
+    if new_title != old_title {
+        sets.push("title = '{sql_escape(new_title)}'")
+        changes.push("title")
+    }
+    if new_desc != old_desc.trim() {
+        sets.push("description = '{sql_escape(new_desc)}'")
+        changes.push("description")
+    }
+    if new_priority != old_priority {
+        sets.push("priority = {new_priority}")
+        changes.push("priority")
+    }
+    if !new_status.is_empty() && new_status != old_status {
+        sets.push("status = '{sql_escape(new_status)}'")
+        if new_status == "done" || new_status == "cancelled" {
+            sets.push("closed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+        }
+        changes.push("status")
+    }
+
+    let mut new_tags: List[Str] = []
+    if !new_tags_str.is_empty() {
+        let parts = new_tags_str.split(",")
+        for part in parts {
+            let t = part.trim()
+            if !t.is_empty() { new_tags.push(t) }
+        }
+    }
+
+    let mut tags_added: List[Str] = []
+    let mut tags_removed: List[Str] = []
+    for nt in new_tags {
+        if !list_contains(old_tags, nt) {
+            tags_added.push(nt)
+        }
+    }
+    for ot in old_tags {
+        if !list_contains(new_tags, ot) {
+            tags_removed.push(ot)
+        }
+    }
+
+    if sets.is_empty() && tags_added.is_empty() && tags_removed.is_empty() {
+        io.println("Nothing changed.")
+        return
+    }
+
+    if !sets.is_empty() {
+        sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+        let set_clause = sets.join(", ")
+        db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+    }
+
+    for ta in tags_added {
+        db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ({id}, {ta})").unwrap()
+        changes.push("+tag:{ta}")
+    }
+    for tr in tags_removed {
+        db.exec("DELETE FROM tags WHERE task_id = {id} AND tag = {tr}").unwrap()
+        changes.push("-tag:{tr}")
+    }
+
+    log_activity(id, "edited", "")
+    io.println("Updated {sid}: {changes.join(", ")}")
 }
 
 pub fn cmd_install() {

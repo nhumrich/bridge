@@ -1,3 +1,5 @@
+import std.db
+
 pub fn db_path() -> Str {
     let home = get_env("HOME") ?? "/tmp"
     let dir = "{home}/.local/share/bridge"
@@ -11,15 +13,10 @@ pub fn db_path() -> Str {
     "{dir}/bridge.db"
 }
 
-pub fn db_open_connection() {
-    db.open(db_path())
-    db.exec("PRAGMA busy_timeout=5000")
-}
-
 pub fn init_db() {
-    db_open_connection()
-    db.exec("PRAGMA journal_mode=WAL")
-    db.exec("PRAGMA foreign_keys=ON")
+    db.query("PRAGMA busy_timeout=5000").unwrap()
+    db.query("PRAGMA journal_mode=WAL").unwrap()
+    db.query("PRAGMA foreign_keys=ON").unwrap()
     db.exec("CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -29,17 +26,17 @@ pub fn init_db() {
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     closed_at TEXT
-)")
+)").unwrap()
     db.exec("CREATE TABLE IF NOT EXISTS tags (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     tag TEXT NOT NULL,
     PRIMARY KEY (task_id, tag)
-)")
+)").unwrap()
     db.exec("CREATE TABLE IF NOT EXISTS deps (
     blocker_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     blocked_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     PRIMARY KEY (blocker_id, blocked_id)
-)")
+)").unwrap()
     db.exec("CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -47,7 +44,7 @@ pub fn init_db() {
     session_id TEXT,
     project_path TEXT,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-)")
+)").unwrap()
     db.exec("CREATE TABLE IF NOT EXISTS task_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -56,10 +53,10 @@ pub fn init_db() {
     session_id TEXT,
     project_path TEXT,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-)")
-    db.exec("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)")
-    db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocked ON deps(blocked_id)")
-    db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocker ON deps(blocker_id)")
-    db.exec("CREATE INDEX IF NOT EXISTS idx_activity_task ON activity_log(task_id)")
-    db.exec("CREATE INDEX IF NOT EXISTS idx_notes_task ON task_notes(task_id)")
+)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocked ON deps(blocked_id)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocker ON deps(blocker_id)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_activity_task ON activity_log(task_id)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_notes_task ON task_notes(task_id)").unwrap()
 }

@@ -1,0 +1,238 @@
+import std.db
+import commands.{sql_escape, build_tag_clauses, list_contains, cmd_ready, cmd_add, cmd_done, cmd_start, cmd_dep_add}
+import std.testing.{capture_print}
+
+fn setup_test_db() {
+    db.exec("PRAGMA foreign_keys=ON").unwrap()
+    db.exec("CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    status TEXT DEFAULT 'open' CHECK(status IN ('open','in_progress','done','cancelled')),
+    priority INTEGER DEFAULT 2 CHECK(priority BETWEEN 0 AND 4),
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    closed_at TEXT
+)").unwrap()
+    db.exec("CREATE TABLE IF NOT EXISTS tags (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (task_id, tag)
+)").unwrap()
+    db.exec("CREATE TABLE IF NOT EXISTS deps (
+    blocker_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    blocked_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    PRIMARY KEY (blocker_id, blocked_id)
+)").unwrap()
+    db.exec("CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    session_id TEXT,
+    project_path TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+)").unwrap()
+    db.exec("CREATE TABLE IF NOT EXISTS task_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'user' CHECK(source IN ('user','agent')),
+    session_id TEXT,
+    project_path TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocked ON deps(blocked_id)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocker ON deps(blocker_id)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_activity_task ON activity_log(task_id)").unwrap()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_notes_task ON task_notes(task_id)").unwrap()
+}
+
+test "sql_escape basic string" {
+    assert_eq(sql_escape("hello"), "hello")
+}
+
+test "sql_escape single quotes" {
+    assert_eq(sql_escape("it's a test"), "it''s a test")
+}
+
+test "sql_escape empty string" {
+    assert_eq(sql_escape(""), "")
+}
+
+test "build_tag_clauses empty list" {
+    let clauses = build_tag_clauses([])
+    assert_eq(clauses.len(), 0)
+}
+
+test "build_tag_clauses single tag" {
+    let clauses = build_tag_clauses(["bug"])
+    assert_eq(clauses.len(), 1)
+    assert((clauses.get(0) ?? "").contains("tg.tag = 'bug'"))
+}
+
+test "build_tag_clauses multiple tags" {
+    let clauses = build_tag_clauses(["bug", "urgent"])
+    assert_eq(clauses.len(), 2)
+    assert((clauses.get(0) ?? "").contains("tg.tag = 'bug'"))
+    assert((clauses.get(1) ?? "").contains("tg.tag = 'urgent'"))
+}
+
+test "build_tag_clauses tag with quote" {
+    let clauses = build_tag_clauses(["it's"])
+    assert_eq(clauses.len(), 1)
+    assert((clauses.get(0) ?? "").contains("tg.tag = 'it''s'"))
+}
+
+test "list_contains found" {
+    assert(list_contains(["a", "b", "c"], "b"))
+}
+
+test "list_contains not found" {
+    assert(!list_contains(["a", "b", "c"], "z"))
+}
+
+test "list_contains empty list" {
+    assert(!list_contains([], "a"))
+}
+
+test "cmd_ready shows open tasks" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'Open task', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Open task"))
+    }
+}
+
+test "cmd_ready shows in_progress tasks" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'Active task', 'in_progress', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Active task"))
+    }
+}
+
+test "cmd_ready excludes done and cancelled" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'Done task', 'done', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0002', 'Cancelled task', 'cancelled', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("No ready tasks."))
+    }
+}
+
+test "cmd_ready excludes blocked tasks" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKER1', 'Blocker', 'open', 1)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKED1', 'Blocked', 'open', 2)").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Blocker"))
+        assert(!((output.get(0) ?? "").contains("Blocked")))
+    }
+}
+
+test "cmd_ready includes task whose blocker is done" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKER1', 'Blocker', 'done', 1)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKED1', 'Unblocked now', 'open', 2)").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Unblocked now"))
+    }
+}
+
+test "cmd_add creates a task" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_add("My new task", "A description", 1, ["bug", "urgent"], "")
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Created:"))
+        assert((output.get(0) ?? "").contains("My new task"))
+
+        let rows = db.query("SELECT id, title, description, priority FROM tasks").unwrap()
+        assert_eq(rows.len(), 1)
+        let row = rows.get(0).unwrap()
+        assert_eq(row.get_at(1) ?? "", "My new task")
+        assert_eq(row.get_at(2) ?? "", "A description")
+        assert_eq(row.get_at(3) ?? "", "1")
+
+        let tag_rows = db.query("SELECT tag FROM tags ORDER BY tag ASC").unwrap()
+        assert_eq(tag_rows.len(), 2)
+        assert_eq(tag_rows.get(0).unwrap().get_at(0) ?? "", "bug")
+        assert_eq(tag_rows.get(1).unwrap().get_at(0) ?? "", "urgent")
+    }
+}
+
+test "cmd_done marks task done" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'To finish', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_done("TASK0001", "")
+        }
+        let rows = db.query("SELECT status FROM tasks WHERE id = 'TASK0001'").unwrap()
+        assert_eq(rows.get(0).unwrap().get_at(0) ?? "", "done")
+    }
+}
+
+test "cmd_start marks task in_progress" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'To start', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_start("TASK0001", "")
+        }
+        let rows = db.query("SELECT status FROM tasks WHERE id = 'TASK0001'").unwrap()
+        assert_eq(rows.get(0).unwrap().get_at(0) ?? "", "in_progress")
+    }
+}
+
+test "cmd_dep_add creates dependency" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'Blocker', 'open', 1)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0002', 'Blocked', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_dep_add("TASK0001", "TASK0002")
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("blocks"))
+
+        let rows = db.query("SELECT blocker_id, blocked_id FROM deps").unwrap()
+        assert_eq(rows.len(), 1)
+        assert_eq(rows.get(0).unwrap().get_at(0) ?? "", "TASK0001")
+        assert_eq(rows.get(0).unwrap().get_at(1) ?? "", "TASK0002")
+    }
+}
