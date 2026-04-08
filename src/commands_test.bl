@@ -1,51 +1,10 @@
 import std.db
+import db.{init_db}
 import commands.{sql_escape, build_tag_clauses, list_contains, cmd_ready, cmd_add, cmd_done, cmd_start, cmd_dep_add}
 import std.testing.{capture_print}
 
 fn setup_test_db() {
-    db.exec("PRAGMA foreign_keys=ON").unwrap()
-    db.exec("CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    status TEXT DEFAULT 'open' CHECK(status IN ('open','in_progress','done','cancelled')),
-    priority INTEGER DEFAULT 2 CHECK(priority BETWEEN 0 AND 4),
-    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-    closed_at TEXT
-)").unwrap()
-    db.exec("CREATE TABLE IF NOT EXISTS tags (
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    tag TEXT NOT NULL,
-    PRIMARY KEY (task_id, tag)
-)").unwrap()
-    db.exec("CREATE TABLE IF NOT EXISTS deps (
-    blocker_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    blocked_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    PRIMARY KEY (blocker_id, blocked_id)
-)").unwrap()
-    db.exec("CREATE TABLE IF NOT EXISTS activity_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    action TEXT NOT NULL,
-    session_id TEXT,
-    project_path TEXT,
-    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-)").unwrap()
-    db.exec("CREATE TABLE IF NOT EXISTS task_notes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'user' CHECK(source IN ('user','agent')),
-    session_id TEXT,
-    project_path TEXT,
-    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-)").unwrap()
-    db.exec("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)").unwrap()
-    db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocked ON deps(blocked_id)").unwrap()
-    db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocker ON deps(blocker_id)").unwrap()
-    db.exec("CREATE INDEX IF NOT EXISTS idx_activity_task ON activity_log(task_id)").unwrap()
-    db.exec("CREATE INDEX IF NOT EXISTS idx_notes_task ON task_notes(task_id)").unwrap()
+    init_db()
 }
 
 test "sql_escape basic string" {

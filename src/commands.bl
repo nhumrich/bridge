@@ -41,8 +41,8 @@ pub fn resolve_id(prefix: Str) -> Str {
     row.get_at(0) ?? ""
 }
 
-fn tags_for_task(task_id: Str) -> Str {
-    let rows = db.query("SELECT tag FROM tags WHERE task_id = {task_id}").unwrap()
+fn tags_list_for_task(task_id: Str) -> List[Str] {
+    let rows = db.query("SELECT tag FROM tags WHERE task_id = {task_id} ORDER BY tag ASC").unwrap()
     let mut tags: List[Str] = []
     for row in rows {
         let tag = row.get_at(0) ?? ""
@@ -50,7 +50,11 @@ fn tags_for_task(task_id: Str) -> Str {
             tags.push(tag)
         }
     }
-    tags.join(", ")
+    tags
+}
+
+fn tags_for_task(task_id: Str) -> Str {
+    tags_list_for_task(task_id).join(", ")
 }
 
 
@@ -281,25 +285,25 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
 
 pub fn cmd_start(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    cmd_edit(id_prefix, "", "", -1, "in_progress", false)
+    cmd_edit(id, "", "", -1, "in_progress", false)
     log_activity(id, "started", session_id)
 }
 
 pub fn cmd_stop(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    cmd_edit(id_prefix, "", "", -1, "open", false)
+    cmd_edit(id, "", "", -1, "open", false)
     log_activity(id, "stopped", session_id)
 }
 
 pub fn cmd_done(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    cmd_edit(id_prefix, "", "", -1, "done", false)
+    cmd_edit(id, "", "", -1, "done", false)
     log_activity(id, "closed", session_id)
 }
 
 pub fn cmd_cancel(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    cmd_edit(id_prefix, "", "", -1, "cancelled", false)
+    cmd_edit(id, "", "", -1, "cancelled", false)
     log_activity(id, "cancelled", session_id)
 }
 
@@ -333,6 +337,16 @@ pub fn cmd_ready(tag_filters: List[Str], json_mode: Bool) {
 }
 
 fn has_cycle(from_id: Str, to_id: Str) -> Bool {
+    let all_deps = db.query("SELECT blocker_id, blocked_id FROM deps").unwrap()
+    let mut adj: Map[Str, List[Str]] = Map()
+    for dep in all_deps {
+        let blocker = dep.get_at(0) ?? ""
+        let blocked = dep.get_at(1) ?? ""
+        let mut children = map_get_list(adj, blocker)
+        children.push(blocked)
+        adj.set(blocker, children)
+    }
+
     let mut visited: List[Str] = []
     let mut stack: List[Str] = [to_id]
 
@@ -346,9 +360,8 @@ fn has_cycle(from_id: Str, to_id: Str) -> Bool {
             // already visited
         } else {
             visited.push(current)
-            let deps_rows = db.query("SELECT blocked_id FROM deps WHERE blocker_id = {current}").unwrap()
-            for dr in deps_rows {
-                let did = dr.get_at(0) ?? ""
+            let deps_list = map_get_list(adj, current)
+            for did in deps_list {
                 if !did.is_empty() {
                     stack.push(did)
                 }
@@ -631,12 +644,7 @@ pub fn cmd_vi(id_prefix: Str) {
     let old_status = row.get_at(2) ?? "open"
     let old_priority = (row.get_at(3) ?? "2").to_int()
 
-    let tag_rows = db.query("SELECT tag FROM tags WHERE task_id = {id} ORDER BY tag ASC").unwrap()
-    let mut old_tags: List[Str] = []
-    for tr in tag_rows {
-        let t = tr.get_at(0) ?? ""
-        if !t.is_empty() { old_tags.push(t) }
-    }
+    let old_tags = tags_list_for_task(id)
     let old_tags_str = old_tags.join(", ")
 
     let mut lines: List[Str] = []
