@@ -1,7 +1,7 @@
 import std.args.{ArgParser, Args, argparser_new, set_version, add_flag, add_command, command_add_positional, command_add_option, command_add_flag, argparse, args_error, args_command, args_has, args_get, args_get_all, args_positional, args_positional_count, generate_help, generate_command_help}
 import std.db
 import db.{db_path, init_db}
-import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_vi, cmd_start, cmd_stop, cmd_done, cmd_cancel, cmd_rm, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall, cmd_graph}
+import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_vi, cmd_start, cmd_stop, cmd_done, cmd_cancel, cmd_reopen, cmd_rm, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall, cmd_graph}
 
 fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     let mut result: List[Str] = []
@@ -86,6 +86,10 @@ fn build_parser() -> ArgParser {
     p = add_command(p, "cancel", "Cancel a task")
     p = command_add_positional(p, "cancel", "id", "Task ID prefix")
     p = command_add_option(p, "cancel", "--session", "", "Session ID")
+
+    p = add_command(p, "reopen", "Reopen a closed task")
+    p = command_add_positional(p, "reopen", "id", "Task ID prefix")
+    p = command_add_option(p, "reopen", "--session", "", "Session ID")
 
     p = add_command(p, "rm", "Delete a task")
     p = command_add_positional(p, "rm", "id", "Task ID prefix")
@@ -228,6 +232,13 @@ fn run() {
             exit(1)
         }
         cmd_cancel(id, session_id)
+    } else if cmd == "reopen" {
+        let id = args_positional(a, 0)
+        if id == "" {
+            io.eprintln("Usage: br reopen <id>")
+            exit(1)
+        }
+        cmd_reopen(id, session_id)
     } else if cmd == "rm" {
         let id = args_positional(a, 0)
         if id == "" {

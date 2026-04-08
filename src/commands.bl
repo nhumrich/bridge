@@ -248,11 +248,10 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     }
 }
 
-pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, append: Bool) {
+fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, append: Bool) {
     if !title.is_empty() {
         check_title_len(title)
     }
-    let id = resolve_id(id_prefix)
     let mut sets: List[Str] = []
     if !title.is_empty() {
         sets.push("title = '{sql_escape(title)}'")
@@ -271,6 +270,8 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
         sets.push("status = '{sql_escape(status)}'")
         if status == "done" || status == "cancelled" {
             sets.push("closed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+        } else if status == "open" || status == "in_progress" {
+            sets.push("closed_at = NULL")
         }
     }
     if sets.len() == 0 {
@@ -283,28 +284,39 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
     io.println("Updated: {short_id(id)}")
 }
 
+pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, append: Bool) {
+    let id = resolve_id(id_prefix)
+    edit_task(id, title, description, priority, status, append)
+}
+
 pub fn cmd_start(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    cmd_edit(id, "", "", -1, "in_progress", false)
+    edit_task(id, "", "", -1, "in_progress", false)
     log_activity(id, "started", session_id)
 }
 
 pub fn cmd_stop(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    cmd_edit(id, "", "", -1, "open", false)
+    edit_task(id, "", "", -1, "open", false)
     log_activity(id, "stopped", session_id)
 }
 
 pub fn cmd_done(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    cmd_edit(id, "", "", -1, "done", false)
+    edit_task(id, "", "", -1, "done", false)
     log_activity(id, "closed", session_id)
 }
 
 pub fn cmd_cancel(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    cmd_edit(id, "", "", -1, "cancelled", false)
+    edit_task(id, "", "", -1, "cancelled", false)
     log_activity(id, "cancelled", session_id)
+}
+
+pub fn cmd_reopen(id_prefix: Str, session_id: Str) {
+    let id = resolve_id(id_prefix)
+    edit_task(id, "", "", -1, "open", false)
+    log_activity(id, "reopened", session_id)
 }
 
 pub fn cmd_rm(id_prefix: Str) {
