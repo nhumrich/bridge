@@ -1,7 +1,7 @@
 import std.db
 
 pub fn db_path() -> Str {
-    let home = get_env("HOME") ?? "/tmp"
+    let home = env.var("HOME") ?? "/tmp"
     let dir = "{home}/.local/share/bridge"
     if is_dir(dir) == 0 {
         let result = process_run("mkdir", ["-p", dir])

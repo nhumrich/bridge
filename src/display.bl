@@ -1,3 +1,11 @@
+import std.term
+
+fn use_color() -> Bool {
+    let no_color = env.var("NO_COLOR") ?? ""
+    if !no_color.is_empty() { return false }
+    term.is_tty()
+}
+
 pub fn short_id(id: Str) -> Str {
     if id.len() > 8 {
         return id.slice(0, 8)
@@ -6,18 +14,34 @@ pub fn short_id(id: Str) -> Str {
 }
 
 pub fn format_priority(p: Int) -> Str {
-    if p == 0 { return "P0" }
-    if p == 1 { return "P1" }
-    if p == 2 { return "P2" }
-    if p == 3 { return "P3" }
-    "P4"
+    let label = if p == 0 { "P0" }
+        else if p == 1 { "P1" }
+        else if p == 2 { "P2" }
+        else if p == 3 { "P3" }
+        else { "P4" }
+    if !use_color() { return label }
+    if p == 0 { return term.bold(term.red(label)) }
+    if p == 1 { return term.red(label) }
+    if p == 2 { return term.yellow(label) }
+    if p == 4 { return term.dim(label) }
+    label
 }
 
 pub fn format_status(status: Str) -> Str {
     if status == "open" { return "[ ]" }
-    if status == "in_progress" { return "[~]" }
-    if status == "done" { return "[x]" }
-    "[-]"
+    if status == "in_progress" {
+        let s = "[~]"
+        if use_color() { return term.yellow(s) }
+        return s
+    }
+    if status == "done" {
+        let s = "[x]"
+        if use_color() { return term.green(s) }
+        return s
+    }
+    let s = "[-]"
+    if use_color() { return term.dim(s) }
+    s
 }
 
 fn sanitize_title(title: Str) -> Str {
@@ -30,14 +54,27 @@ pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: S
     let sstr = format_status(status)
     let clean = sanitize_title(title)
     let display_title = if clean.len() > 72 { "{clean.slice(0, 72)}..." } else { clean }
+    let color = use_color()
     let mut tag_part = ""
-    if !tags.is_empty() { tag_part = " [{tags}]" }
-    "{sstr} {sid}  {pstr}  {display_title}{tag_part}"
+    if !tags.is_empty() {
+        if color {
+            tag_part = " [{term.magenta(tags)}]"
+        } else {
+            tag_part = " [{tags}]"
+        }
+    }
+    let mut display_id = sid
+    if color { display_id = term.cyan(sid) }
+    "{sstr} {display_id}  {pstr}  {display_title}{tag_part}"
 }
 
 pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, priority: Int, created_at: Str, updated_at: Str, closed_at: Str, tags: Str, blocks: Str, depends_on: Str, is_blocked: Bool) -> Str {
     let mut lines: List[Str] = []
-    lines.push("Task: {short_id(id)}")
+    let color = use_color()
+    let sid = short_id(id)
+    let mut display_sid = sid
+    if color { display_sid = term.cyan(sid) }
+    lines.push("Task: {display_sid}")
     lines.push("  Full ID:  {id}")
     lines.push("  Title:    {sanitize_title(title)}")
     let mut status_line = status
@@ -51,7 +88,9 @@ pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, pr
     lines.push("  Status:   {status_line}")
     lines.push("  Priority: {format_priority(priority)}")
     lines.push("  Desc:     {description}")
-    lines.push("  Tags:     {tags}")
+    let mut display_tags = tags
+    if color && !tags.is_empty() { display_tags = term.magenta(tags) }
+    lines.push("  Tags:     {display_tags}")
     lines.push("  Depends on: {depends_on}")
     lines.push("  Blocks:   {blocks}")
     lines.push("  Created:  {created_at}")

@@ -103,15 +103,15 @@ fn rows_to_json(rows: List[Row], col_names: List[Str]) -> Str {
 // --- Activity Logging ---
 
 fn log_activity(task_id: Str, action: Str, session_id: Str) {
-    let project_path = get_env("PWD") ?? ""
-    let sid = get_env("BR_SESSION_ID") ?? session_id
+    let project_path = env.var("PWD") ?? ""
+    let sid = env.var("BR_SESSION_ID") ?? session_id
     db.exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ({task_id}, {action}, {sid}, {project_path})").unwrap()
 }
 
 pub fn cmd_note(id_prefix: Str, content: Str) {
     let id = resolve_id(id_prefix)
-    let project_path = get_env("PWD") ?? ""
-    let session_id = get_env("BR_SESSION_ID") ?? ""
+    let project_path = env.var("PWD") ?? ""
+    let session_id = env.var("BR_SESSION_ID") ?? ""
     let source = if session_id.is_empty() { "user" } else { "agent" }
     db.exec("INSERT INTO task_notes (task_id, content, source, session_id, project_path) VALUES ({id}, {content}, {source}, {session_id}, {project_path})").unwrap()
     io.println("Note added to {short_id(id)}")
@@ -674,7 +674,7 @@ pub fn cmd_vi(id_prefix: Str) {
     let tmp_path = "/tmp/br-edit-{sid}.txt"
     write_file(tmp_path, content)
 
-    let editor = get_env("EDITOR") ?? "vi"
+    let editor = env.var("EDITOR") ?? "vi"
     let exit_code = shell_exec("{editor} {tmp_path}")
     if exit_code != 0 {
         process_run("rm", ["-f", tmp_path])
@@ -819,7 +819,7 @@ pub fn cmd_vi(id_prefix: Str) {
 }
 
 pub fn cmd_install() {
-    let home = get_env("HOME") ?? "/tmp"
+    let home = env.var("HOME") ?? "/tmp"
     let dest_dir = "{home}/.claude/commands"
 
     let result = process_run("mkdir", ["-p", dest_dir])
@@ -945,7 +945,7 @@ fn install_hook(home: Str) {
 }
 
 pub fn cmd_uninstall() {
-    let home = get_env("HOME") ?? "/tmp"
+    let home = env.var("HOME") ?? "/tmp"
     let dest_dir = "{home}/.claude/commands"
     let names = ["br:add.md", "br:close.md", "br:next.md", "br:note.md", "br:plan.md"]
     let mut removed = 0
