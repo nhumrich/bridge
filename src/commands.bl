@@ -58,7 +58,7 @@ fn tags_for_task(task_id: Str) -> Str {
 }
 
 
-type TaskRow { id: Str, title: Str, priority: Int, status: Str, tags: Str }
+type TaskRow { id: Str, title: Str, priority: Int, status: Str, tags: Str, is_blocked: Bool }
 
 fn parse_task_row(row: Row) -> TaskRow {
     TaskRow {
@@ -66,7 +66,19 @@ fn parse_task_row(row: Row) -> TaskRow {
         title: row.get_at(1) ?? "",
         priority: (row.get_at(2) ?? "2").to_int(),
         status: row.get_at(3) ?? "",
-        tags: row.get_at(4) ?? ""
+        tags: row.get_at(4) ?? "",
+        is_blocked: false
+    }
+}
+
+fn parse_task_row_with_blocked(row: Row, blocked_col: Int) -> TaskRow {
+    TaskRow {
+        id: row.get_at(0) ?? "",
+        title: row.get_at(1) ?? "",
+        priority: (row.get_at(2) ?? "2").to_int(),
+        status: row.get_at(3) ?? "",
+        tags: row.get_at(4) ?? "",
+        is_blocked: (row.get_at(blocked_col) ?? "0").to_int() != 0
     }
 }
 
@@ -78,9 +90,17 @@ fn parse_task_rows(rows: List[Row]) -> List[TaskRow] {
     result
 }
 
+fn parse_task_rows_with_blocked(rows: List[Row], blocked_col: Int) -> List[TaskRow] {
+    let mut result: List[TaskRow] = []
+    for row in rows {
+        result.push(parse_task_row_with_blocked(row, blocked_col))
+    }
+    result
+}
+
 fn print_task_rows(task_rows: List[TaskRow]) {
     for t in task_rows {
-        io.println(format_task_line(t.id, t.title, t.priority, t.status, t.tags))
+        io.println(format_task_line(t.id, t.title, t.priority, t.status, t.tags, t.is_blocked))
     }
 }
 
@@ -153,10 +173,10 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_
         where_parts.push(clause)
     }
     let where_clause = if where_parts.len() == 0 { "" } else { " WHERE {where_parts.join(" AND ")}" }
-    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, CASE WHEN EXISTS (SELECT 1 FROM deps d JOIN tasks b ON b.id = d.blocker_id WHERE d.blocked_id = t.id AND b.status NOT IN ('done', 'cancelled')) THEN 1 ELSE 0 END as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
     if json_mode {
-        io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags"]))
+        io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags", "is_blocked"]))
         return
     }
 
@@ -165,7 +185,7 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_
         return
     }
 
-    print_task_rows(parse_task_rows(rows))
+    print_task_rows(parse_task_rows_with_blocked(rows, 5))
 }
 
 pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
@@ -356,7 +376,7 @@ fn has_cycle(from_id: Str, to_id: Str) -> Bool {
         let blocked = dep.get_at(1) ?? ""
         let mut children = map_get_list(adj, blocker)
         children.push(blocked)
-        adj.set(blocker, children)
+        adj.insert(blocker, children)
     }
 
     let mut visited: List[Str] = []
@@ -429,7 +449,7 @@ pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
     for row in rows {
         let t = parse_task_row(row)
         let blockers = row.get_at(5) ?? ""
-        let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags)
+        let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags, true)
         io.println("{line}  (blocked by: {blockers})")
     }
 }
@@ -437,11 +457,13 @@ pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
 // --- Graph Command ---
 
 fn map_get_list(m: Map[Str, List[Str]], key: Str) -> List[Str] {
-    if m.has(key) {
-        return m.get(key)
+    match m.get(key) {
+        Some(v) => v
+        None => {
+            let empty: List[Str] = []
+            empty
+        }
     }
-    let empty: List[Str] = []
-    empty
 }
 
 
@@ -453,14 +475,14 @@ type TreeCtx {
 }
 
 fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: TreeCtx) {
-    let row = ctx.tasks.get(task_id)
+    let row = ctx.tasks.get(task_id).unwrap()
     let t = parse_task_row(row)
-    let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags)
+    let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags, t.is_blocked)
 
     let connector = if is_root { "" } else if is_last { "└── " } else { "├── " }
     let marker = if !ctx.target_id.is_empty() && task_id == ctx.target_id { "  <--" } else { "" }
 
-    let already_visited = ctx.visited.has(task_id)
+    let already_visited = ctx.visited.contains_key(task_id)
     let suffix = if already_visited { "  ..." } else { "" }
 
     io.println("{prefix}{connector}{line}{marker}{suffix}")
@@ -468,7 +490,7 @@ fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: Tre
     if already_visited {
         return
     }
-    ctx.visited.set(task_id, true)
+    ctx.visited.insert(task_id, true)
 
     let child_list = map_get_list(ctx.children, task_id)
     let mut i = 0
@@ -500,7 +522,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
     let mut tasks: Map[Str, Row] = Map()
     for row in rows {
         let id = row.get_at(0) ?? ""
-        tasks.set(id, row)
+        tasks.insert(id, row)
     }
 
     let edge_rows = db.query("SELECT blocker_id, blocked_id FROM deps").unwrap()
@@ -513,13 +535,13 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
         for er in edge_rows {
             let blocker = er.get_at(0) ?? ""
             let blocked = er.get_at(1) ?? ""
-            if tasks.has(blocker) && tasks.has(blocked) {
+            if tasks.contains_key(blocker) && tasks.contains_key(blocked) {
                 let mut fl = map_get_list(fwd, blocker)
                 fl.push(blocked)
-                fwd.set(blocker, fl)
+                fwd.insert(blocker, fl)
                 let mut rl = map_get_list(rev, blocked)
                 rl.push(blocker)
-                rev.set(blocked, rl)
+                rev.insert(blocked, rl)
             }
         }
 
@@ -528,15 +550,15 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
         while !stack.is_empty() {
             let current = stack.get(stack.len() - 1) ?? ""
             stack.pop()
-            if !component.has(current) {
-                component.set(current, true)
+            if !component.contains_key(current) {
+                component.insert(current, true)
                 let fwd_list = map_get_list(fwd, current)
                 for child in fwd_list {
-                    if !component.has(child) { stack.push(child) }
+                    if !component.contains_key(child) { stack.push(child) }
                 }
                 let rev_list = map_get_list(rev, current)
                 for parent in rev_list {
-                    if !component.has(parent) { stack.push(parent) }
+                    if !component.contains_key(parent) { stack.push(parent) }
                 }
             }
         }
@@ -544,7 +566,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
         let mut remove_ids: List[Str] = []
         let all_ids = tasks.keys()
         for tid in all_ids {
-            if !component.has(tid) {
+            if !component.contains_key(tid) {
                 remove_ids.push(tid)
             }
         }
@@ -558,18 +580,18 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
     for er in edge_rows {
         let blocker = er.get_at(0) ?? ""
         let blocked = er.get_at(1) ?? ""
-        if tasks.has(blocker) && tasks.has(blocked) {
+        if tasks.contains_key(blocker) && tasks.contains_key(blocked) {
             let mut child_list = map_get_list(children, blocker)
             child_list.push(blocked)
-            children.set(blocker, child_list)
-            has_parent.set(blocked, true)
+            children.insert(blocker, child_list)
+            has_parent.insert(blocked, true)
         }
     }
 
     let mut roots: List[Str] = []
     for row in rows {
         let id = row.get_at(0) ?? ""
-        if tasks.has(id) && !has_parent.has(id) {
+        if tasks.contains_key(id) && !has_parent.contains_key(id) {
             roots.push(id)
         }
     }

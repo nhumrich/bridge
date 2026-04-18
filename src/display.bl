@@ -27,7 +27,12 @@ pub fn format_priority(p: Int) -> Str {
     label
 }
 
-pub fn format_status(status: Str) -> Str {
+pub fn format_status(status: Str, blocked: Bool) -> Str {
+    if blocked && (status == "open" || status == "in_progress") {
+        let s = "[!]"
+        if use_color() { return term.red(s) }
+        return s
+    }
     if status == "open" { return "[ ]" }
     if status == "in_progress" {
         let s = "[~]"
@@ -48,10 +53,10 @@ fn sanitize_title(title: Str) -> Str {
     title.replace("\n", " ").replace("\r", " ").replace("\t", " ")
 }
 
-pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: Str) -> Str {
+pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: Str, is_blocked: Bool) -> Str {
     let sid = short_id(id)
     let pstr = format_priority(priority)
-    let sstr = format_status(status)
+    let sstr = format_status(status, is_blocked)
     let clean = sanitize_title(title)
     let display_title = if clean.len() > 72 { "{clean.slice(0, 72)}..." } else { clean }
     let color = use_color()
