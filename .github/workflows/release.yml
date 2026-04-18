@@ -27,6 +27,7 @@ jobs:
       - name: Checksums
         run: |
           cd dist
+          rm -f br-*.c
           sha256sum br-* > checksums.txt
 
       - uses: softprops/action-gh-release@v2
