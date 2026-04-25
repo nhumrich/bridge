@@ -61,11 +61,12 @@ jobs:
 
       - name: Configure SSH for AUR
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
-          printf 'Host aur.archlinux.org\n  IdentityFile ~/.ssh/aur\n  User aur\n' >> ~/.ssh/config
+          mkdir -p /root/.ssh
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > /root/.ssh/aur
+          chmod 600 /root/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> /root/.ssh/known_hosts
+          chmod 644 /root/.ssh/known_hosts
+          printf 'Host aur.archlinux.org\n  IdentityFile /root/.ssh/aur\n  User aur\n' >> /root/.ssh/config
 
       - name: Clone AUR repo
         run: git clone ssh://aur@aur.archlinux.org/bridge-bin.git aur
