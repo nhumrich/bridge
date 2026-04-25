@@ -69,25 +69,24 @@ jobs:
           printf 'Host aur.archlinux.org\n  IdentityFile /root/.ssh/aur\n  User aur\n' >> /root/.ssh/config
 
       - name: Clone AUR repo
-        run: git clone ssh://aur@aur.archlinux.org/bridge-bin.git aur
+        run: git clone ssh://aur@aur.archlinux.org/bridge-bin.git /tmp/aur
 
       - name: Render PKGBUILD
         run: |
           sed -e "s/__PKGVER__/${{ steps.ver.outputs.pkgver }}/" \
               -e "s/__SHA256_AMD64__/${SHA_AMD64}/" \
               -e "s/__SHA256_ARM64__/${SHA_ARM64}/" \
-              .github/aur/PKGBUILD.in > aur/PKGBUILD
+              .github/aur/PKGBUILD.in > /tmp/aur/PKGBUILD
 
       - name: Generate .SRCINFO
-        working-directory: aur
         run: |
           useradd -m builder
-          chown -R builder:builder .
-          su builder -c 'makepkg --printsrcinfo > .SRCINFO'
+          chown -R builder:builder /tmp/aur
+          su builder -c 'cd /tmp/aur && makepkg --printsrcinfo > .SRCINFO'
 
       - name: Commit & push to AUR
-        working-directory: aur
         run: |
+          cd /tmp/aur
           git config user.name "${{ secrets.AUR_USERNAME }}"
           git config user.email "nick@humrich.us"
           git add PKGBUILD .SRCINFO
