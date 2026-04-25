@@ -23,7 +23,13 @@ c) pick up "work to be done" without you have to copy/paste or reference a file.
 
 ## Install
 
-Download the latest binary from [Releases](https://github.com/nhumrich/bridge/releases):
+**Arch Linux** (via AUR):
+
+```sh
+yay -S bridge-bin
+```
+
+**Linux / macOS** — download the latest binary from [Releases](https://github.com/nhumrich/bridge/releases):
 
 ```sh
 # Linux (amd64)
