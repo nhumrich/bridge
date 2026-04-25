@@ -78,17 +78,16 @@ jobs:
               -e "s/__SHA256_ARM64__/${SHA_ARM64}/" \
               .github/aur/PKGBUILD.in > /tmp/aur/PKGBUILD
 
-      - name: Generate .SRCINFO
+      - name: Generate .SRCINFO and push
         run: |
           useradd -m builder
           chown -R builder:builder /tmp/aur
-          su builder -c 'cd /tmp/aur && makepkg --printsrcinfo > .SRCINFO'
-
-      - name: Commit & push to AUR
-        run: |
-          cd /tmp/aur
-          git config user.name "${{ secrets.AUR_USERNAME }}"
-          git config user.email "nick@humrich.us"
-          git add PKGBUILD .SRCINFO
-          git commit -m "Release ${{ github.ref_name }}"
-          git push origin HEAD:master
+          su builder -c '
+            cd /tmp/aur
+            makepkg --printsrcinfo > .SRCINFO
+            git config user.name "'"${{ secrets.AUR_USERNAME }}"'"
+            git config user.email "nick@humrich.us"
+            git add PKGBUILD .SRCINFO
+            git commit -m "Release ${{ github.ref_name }}"
+            git push origin HEAD:master
+          '
