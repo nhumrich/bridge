@@ -1,0 +1,68 @@
+name: Publish AUR
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v0.8.0)'
+        required: true
+
+jobs:
+  publish-aur:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling
+        run: |
+          pacman -Sy --noconfirm --needed base-devel git openssh pacman-contrib
+
+      - name: Derive version
+        id: ver
+        run: echo "pkgver=${INPUT_TAG#v}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+
+      - name: Fetch release checksums
+        run: |
+          curl -fsSL -o checksums.txt \
+            "https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag }}/checksums.txt"
+          echo "SHA_AMD64=$(awk '/br-linux-amd64$/{print $1}' checksums.txt)" >> "$GITHUB_ENV"
+          echo "SHA_ARM64=$(awk '/br-linux-arm64$/{print $1}' checksums.txt)" >> "$GITHUB_ENV"
+
+      - name: Configure SSH for AUR
+        run: |
+          mkdir -p /root/.ssh
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > /root/.ssh/aur
+          chmod 600 /root/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> /root/.ssh/known_hosts
+          chmod 644 /root/.ssh/known_hosts
+          printf 'Host aur.archlinux.org\n  IdentityFile /root/.ssh/aur\n  User aur\n' >> /root/.ssh/config
+
+      - name: Clone AUR repo
+        run: git clone ssh://aur@aur.archlinux.org/bridge-bin.git aur
+
+      - name: Render PKGBUILD
+        run: |
+          sed -e "s/__PKGVER__/${{ steps.ver.outputs.pkgver }}/" \
+              -e "s/__SHA256_AMD64__/${SHA_AMD64}/" \
+              -e "s/__SHA256_ARM64__/${SHA_ARM64}/" \
+              .github/aur/PKGBUILD.in > aur/PKGBUILD
+
+      - name: Generate .SRCINFO
+        working-directory: aur
+        run: |
+          useradd -m builder
+          chown -R builder:builder .
+          su builder -c 'makepkg --printsrcinfo > .SRCINFO'
+
+      - name: Commit & push to AUR
+        working-directory: aur
+        run: |
+          git config user.name "${{ secrets.AUR_USERNAME }}"
+          git config user.email "nick@humrich.us"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Release ${{ github.event.inputs.tag }}"
+          git push origin HEAD:master
