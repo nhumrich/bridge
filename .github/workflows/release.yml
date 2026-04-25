@@ -81,13 +81,17 @@ jobs:
       - name: Generate .SRCINFO and push
         run: |
           useradd -m builder
-          chown -R builder:builder /tmp/aur
+          mkdir -p /home/builder/.ssh
+          cp /root/.ssh/aur /home/builder/.ssh/aur
+          cp /root/.ssh/known_hosts /home/builder/.ssh/known_hosts
+          cp /root/.ssh/config /home/builder/.ssh/config
+          chown -R builder:builder /home/builder/.ssh /tmp/aur
           su builder -c '
             cd /tmp/aur
             makepkg --printsrcinfo > .SRCINFO
             git config user.name "'"${{ secrets.AUR_USERNAME }}"'"
             git config user.email "nick@humrich.us"
             git add PKGBUILD .SRCINFO
-            git commit -m "Release ${{ github.ref_name }}"
+            git diff --cached --quiet || git commit -m "Release ${{ github.ref_name }}"
             git push origin HEAD:master
           '
