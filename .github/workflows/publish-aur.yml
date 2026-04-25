@@ -57,7 +57,7 @@ jobs:
           mkdir -p /home/builder/.ssh
           cp /root/.ssh/aur /home/builder/.ssh/aur
           cp /root/.ssh/known_hosts /home/builder/.ssh/known_hosts
-          cp /root/.ssh/config /home/builder/.ssh/config
+          printf 'Host aur.archlinux.org\n  IdentityFile /home/builder/.ssh/aur\n  User aur\n' > /home/builder/.ssh/config
           chown -R builder:builder /home/builder/.ssh /tmp/aur
           su builder -c '
             cd /tmp/aur
