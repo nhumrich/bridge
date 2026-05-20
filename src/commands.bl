@@ -282,13 +282,7 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
     if !title.is_empty() {
         sets.push("title = '{sql_escape(title)}'")
     }
-    if !description.is_empty() {
-        if append {
-            sets.push("description = description || '\n' || '{sql_escape(description)}'")
-        } else {
-            sets.push("description = '{sql_escape(description)}'")
-        }
-    }
+    let has_desc = !description.is_empty()
     if priority >= 0 {
         sets.push("priority = {priority}")
     }
@@ -300,13 +294,32 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
             sets.push("closed_at = NULL")
         }
     }
-    if sets.len() == 0 {
+    if sets.len() == 0 && !has_desc {
         io.eprintln("Nothing to update")
         exit(1)
     }
     sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
     let set_clause = sets.join(", ")
-    db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+    let has_other = sets.len() > 1
+
+    if has_other && has_desc {
+        db.begin().unwrap()
+        db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+        if append {
+            db.exec("UPDATE tasks SET description = description || '\n' || {description} WHERE id = {id}").unwrap()
+        } else {
+            db.exec("UPDATE tasks SET description = {description} WHERE id = {id}").unwrap()
+        }
+        db.commit().unwrap()
+    } else if has_desc {
+        if append {
+            db.exec("UPDATE tasks SET description = description || '\n' || {description}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
+        } else {
+            db.exec("UPDATE tasks SET description = {description}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
+        }
+    } else {
+        db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+    }
     io.println("Updated: {short_id(id)}")
 }
 
@@ -779,13 +792,14 @@ pub fn cmd_vi(id_prefix: Str) {
 
     let mut sets: List[Str] = []
     let mut changes: List[Str] = []
+    let mut desc_changed = false
 
     if new_title != old_title {
         sets.push("title = '{sql_escape(new_title)}'")
         changes.push("title")
     }
     if new_desc != old_desc.trim() {
-        sets.push("description = '{sql_escape(new_desc)}'")
+        desc_changed = true
         changes.push("description")
     }
     if new_priority != old_priority {
@@ -822,12 +836,21 @@ pub fn cmd_vi(id_prefix: Str) {
         }
     }
 
-    if sets.is_empty() && tags_added.is_empty() && tags_removed.is_empty() {
+    if sets.is_empty() && !desc_changed && tags_added.is_empty() && tags_removed.is_empty() {
         io.println("Nothing changed.")
         return
     }
 
-    if !sets.is_empty() {
+    if !sets.is_empty() && desc_changed {
+        sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+        let set_clause = sets.join(", ")
+        db.begin().unwrap()
+        db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+        db.exec("UPDATE tasks SET description = {new_desc} WHERE id = {id}").unwrap()
+        db.commit().unwrap()
+    } else if desc_changed {
+        db.exec("UPDATE tasks SET description = {new_desc}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
+    } else if !sets.is_empty() {
         sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
         let set_clause = sets.join(", ")
         db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
