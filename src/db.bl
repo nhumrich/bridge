@@ -27,6 +27,14 @@ pub fn init_db() {
     updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     closed_at TEXT
 )").unwrap()
+    db.exec("CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT DEFAULT '',
+    status TEXT DEFAULT 'active' CHECK(status IN ('active','done','archived')),
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+)").unwrap()
     db.exec("CREATE TABLE IF NOT EXISTS tags (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     tag TEXT NOT NULL,
@@ -59,4 +67,21 @@ pub fn init_db() {
     db.exec("CREATE INDEX IF NOT EXISTS idx_deps_blocker ON deps(blocker_id)").unwrap()
     db.exec("CREATE INDEX IF NOT EXISTS idx_activity_task ON activity_log(task_id)").unwrap()
     db.exec("CREATE INDEX IF NOT EXISTS idx_notes_task ON task_notes(task_id)").unwrap()
+    migrate_tasks_project_id()
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)").unwrap()
+}
+
+// SQLite has no `ADD COLUMN IF NOT EXISTS`; guard on PRAGMA table_info so this
+// is a single idempotent path for both new and pre-projects databases.
+fn migrate_tasks_project_id() {
+    let cols = db.query("PRAGMA table_info(tasks)").unwrap()
+    let mut has_project_id = false
+    for col in cols {
+        if (col.get_at(1) ?? "") == "project_id" {
+            has_project_id = true
+        }
+    }
+    if !has_project_id {
+        db.exec("ALTER TABLE tasks ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL").unwrap()
+    }
 }

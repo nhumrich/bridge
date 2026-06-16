@@ -73,7 +73,7 @@ pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: S
     "{sstr} {display_id}  {pstr}  {display_title}{tag_part}"
 }
 
-pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, priority: Int, created_at: Str, updated_at: Str, closed_at: Str, tags: Str, blocks: Str, depends_on: Str, is_blocked: Bool) -> Str {
+pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, priority: Int, created_at: Str, updated_at: Str, closed_at: Str, tags: Str, project: Str, blocks: Str, depends_on: Str, is_blocked: Bool) -> Str {
     let mut lines: List[Str] = []
     let color = use_color()
     let sid = short_id(id)
@@ -96,6 +96,7 @@ pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, pr
     let mut display_tags = tags
     if color && !tags.is_empty() { display_tags = term.magenta(tags) }
     lines.push("  Tags:     {display_tags}")
+    lines.push("  Project:  {project}")
     lines.push("  Depends on: {depends_on}")
     lines.push("  Blocks:   {blocks}")
     lines.push("  Created:  {created_at}")
@@ -123,4 +124,18 @@ pub fn format_note_line(content: Str, source: Str, session_id: Str, created_at: 
         header = "{header}  session={session_id}"
     }
     "{header}\n      {content}"
+}
+
+pub fn format_project_line(id: Str, name: Str, status: Str, done: Int, total: Int) -> Str {
+    let sid = short_id(id)
+    let color = use_color()
+    let mut display_id = sid
+    if color { display_id = term.cyan(sid) }
+    let mut display_status = status
+    if color {
+        if status == "active" { display_status = term.yellow(status) }
+        else if status == "done" { display_status = term.green(status) }
+        else { display_status = term.dim(status) }
+    }
+    "{display_id}  {name}  ({done}/{total})  {display_status}"
 }

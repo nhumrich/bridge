@@ -1,7 +1,7 @@
 import std.args.{ArgParser, Args, argparser_new, set_version, add_flag, add_command, command_add_positional, command_add_option, command_add_flag, argparse, args_error, args_command, args_has, args_get, args_get_all, args_positional, args_positional_count, generate_help, generate_command_help}
 import std.db
 import db.{db_path, init_db}
-import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_vi, cmd_start, cmd_stop, cmd_done, cmd_cancel, cmd_reopen, cmd_rm, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall, cmd_graph}
+import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_vi, cmd_start, cmd_stop, cmd_done, cmd_cancel, cmd_reopen, cmd_rm, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_edit, cmd_project_rm}
 
 fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     let mut result: List[Str] = []
@@ -35,22 +35,26 @@ fn build_parser() -> ArgParser {
     p = command_add_option(p, "add", "-p", "", "Priority (0=highest)")
     p = command_add_option(p, "add", "-t", "", "Tag (repeatable)")
     p = command_add_option(p, "add", "-d", "", "Description")
+    p = command_add_option(p, "add", "--project", "", "Project name or ID")
     p = command_add_option(p, "add", "--session", "", "Session ID")
 
     p = add_command(p, "ls", "List tasks")
     p = command_add_option(p, "ls", "-s", "", "Filter by status")
     p = command_add_option(p, "ls", "-t", "", "Filter by tag")
+    p = command_add_option(p, "ls", "--project", "", "Filter by project")
     p = command_add_flag(p, "ls", "--closed", "-c", "Show closed tasks")
     p = command_add_flag(p, "ls", "--all", "-a", "Show all tasks")
 
     p = add_command(p, "list", "List tasks")
     p = command_add_option(p, "list", "-s", "", "Filter by status")
     p = command_add_option(p, "list", "-t", "", "Filter by tag")
+    p = command_add_option(p, "list", "--project", "", "Filter by project")
     p = command_add_flag(p, "list", "--closed", "-c", "Show closed tasks")
     p = command_add_flag(p, "list", "--all", "-a", "Show all tasks")
 
     p = add_command(p, "ready", "Show ready (unblocked) tasks")
     p = command_add_option(p, "ready", "-t", "", "Filter by tag")
+    p = command_add_option(p, "ready", "--project", "", "Filter by project")
 
     p = add_command(p, "show", "Show task details")
     p = command_add_positional(p, "show", "id", "Task ID prefix")
@@ -65,6 +69,8 @@ fn build_parser() -> ArgParser {
     p = command_add_option(p, "edit", "--desc", "", "New description")
     p = command_add_option(p, "edit", "-p", "", "New priority")
     p = command_add_option(p, "edit", "-s", "", "New status")
+    p = command_add_option(p, "edit", "--project", "", "Assign to project")
+    p = command_add_flag(p, "edit", "--no-project", "", "Remove from project")
     p = command_add_option(p, "edit", "--append", "", "Append to description")
 
     p = add_command(p, "start", "Start a task")
@@ -104,6 +110,7 @@ fn build_parser() -> ArgParser {
 
     p = add_command(p, "blocked", "Show blocked tasks")
     p = command_add_option(p, "blocked", "-t", "", "Filter by tag")
+    p = command_add_option(p, "blocked", "--project", "", "Filter by project")
 
     p = add_command(p, "tag", "Add tags to task")
     p = command_add_positional(p, "tag", "id", "Task ID prefix")
@@ -114,6 +121,22 @@ fn build_parser() -> ArgParser {
     p = add_command(p, "tags", "List all tags")
     p = add_command(p, "stats", "Show task statistics")
     p = command_add_option(p, "stats", "-t", "", "Filter by tag")
+    p = command_add_option(p, "stats", "--project", "", "Filter by project")
+
+    p = add_command(p, "project", "Manage projects")
+    p = add_command(p, "project.add", "Create a project")
+    p = command_add_positional(p, "project.add", "name", "Project name")
+    p = command_add_option(p, "project.add", "-d", "", "Description")
+    p = add_command(p, "project.ls", "List projects")
+    p = add_command(p, "project.show", "Show project details")
+    p = command_add_positional(p, "project.show", "ref", "Project name or ID prefix")
+    p = add_command(p, "project.edit", "Edit a project")
+    p = command_add_positional(p, "project.edit", "ref", "Project name or ID prefix")
+    p = command_add_option(p, "project.edit", "--name", "", "New name")
+    p = command_add_option(p, "project.edit", "--desc", "", "New description")
+    p = command_add_option(p, "project.edit", "-s", "", "New status (active/done/archived)")
+    p = add_command(p, "project.rm", "Delete a project")
+    p = command_add_positional(p, "project.rm", "ref", "Project name or ID prefix")
     p = add_command(p, "graph", "Show dependency graph")
     p = command_add_positional(p, "graph", "id", "Task ID prefix (optional)")
     p = command_add_option(p, "graph", "-t", "", "Filter by tag")
@@ -160,16 +183,19 @@ fn run() {
         if !priority_str.is_empty() { priority = parse_priority(priority_str) }
         let description = args_get(a, "d")
         let tags = args_get_all(a, "t")
-        cmd_add(title, description, priority, tags, session_id)
+        let project_ref = args_get(a, "project")
+        cmd_add(title, description, priority, tags, project_ref, session_id)
     } else if cmd == "ls" || cmd == "list" {
         let status_filter = args_get(a, "s")
         let tag_filters = args_get_all(a, "t")
+        let project_ref = args_get(a, "project")
         let show_closed = args_has(a, "closed")
         let show_all = args_has(a, "all")
-        cmd_ls(status_filter, tag_filters, json_mode, show_closed, show_all)
+        cmd_ls(status_filter, tag_filters, project_ref, json_mode, show_closed, show_all)
     } else if cmd == "ready" {
         let tag_filters = args_get_all(a, "t")
-        cmd_ready(tag_filters, json_mode)
+        let project_ref = args_get(a, "project")
+        cmd_ready(tag_filters, project_ref, json_mode)
     } else if cmd == "show" {
         let id = args_positional(a, 0)
         if id == "" {
@@ -203,7 +229,9 @@ fn run() {
         let mut priority = -1
         if !priority_str.is_empty() { priority = parse_priority(priority_str) }
         let status = args_get(a, "s")
-        cmd_edit(id, title, description, priority, status, append)
+        let project_ref = args_get(a, "project")
+        let clear_project = args_has(a, "no-project")
+        cmd_edit(id, title, description, priority, status, project_ref, clear_project, append)
     } else if cmd == "start" {
         let id = args_positional(a, 0)
         if id == "" {
@@ -264,7 +292,8 @@ fn run() {
         io.println(generate_command_help(p, "dep"))
     } else if cmd == "blocked" {
         let tag_filters = args_get_all(a, "t")
-        cmd_blocked(tag_filters, json_mode)
+        let project_ref = args_get(a, "project")
+        cmd_blocked(tag_filters, project_ref, json_mode)
     } else if cmd == "tag" {
         let id = args_positional(a, 0)
         let tags = args_positionals_from(a, 1)
@@ -285,7 +314,44 @@ fn run() {
         cmd_tags()
     } else if cmd == "stats" {
         let tag_filters = args_get_all(a, "t")
-        cmd_stats(tag_filters)
+        let project_ref = args_get(a, "project")
+        cmd_stats(tag_filters, project_ref)
+    } else if cmd == "project add" {
+        let name = args_positional(a, 0)
+        if name == "" {
+            io.eprintln("Usage: br project add <name> [-d desc]")
+            exit(1)
+        }
+        let description = args_get(a, "d")
+        cmd_project_add(name, description)
+    } else if cmd == "project ls" {
+        cmd_project_ls(json_mode)
+    } else if cmd == "project show" {
+        let ref = args_positional(a, 0)
+        if ref == "" {
+            io.eprintln("Usage: br project show <ref>")
+            exit(1)
+        }
+        cmd_project_show(ref, json_mode)
+    } else if cmd == "project edit" {
+        let ref = args_positional(a, 0)
+        if ref == "" {
+            io.eprintln("Usage: br project edit <ref> [--name N] [--desc D] [-s status]")
+            exit(1)
+        }
+        let name = args_get(a, "name")
+        let description = args_get(a, "desc")
+        let status = args_get(a, "s")
+        cmd_project_edit(ref, name, description, status)
+    } else if cmd == "project rm" {
+        let ref = args_positional(a, 0)
+        if ref == "" {
+            io.eprintln("Usage: br project rm <ref>")
+            exit(1)
+        }
+        cmd_project_rm(ref)
+    } else if cmd == "project" {
+        io.println(generate_command_help(p, "project"))
     } else if cmd == "graph" {
         let id = args_positional(a, 0)
         let tag_filters = args_get_all(a, "t")

@@ -1,6 +1,6 @@
 import std.db
 import db.{init_db}
-import commands.{sql_escape, build_tag_clauses, list_contains, cmd_ready, cmd_add, cmd_done, cmd_start, cmd_dep_add}
+import commands.{sql_escape, build_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_project_add, cmd_project_rm}
 import std.testing.{capture_print}
 
 fn setup_test_db() {
@@ -61,7 +61,7 @@ test "cmd_ready shows open tasks" {
         db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'Open task', 'open', 2)").unwrap()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_ready([], false)
+            cmd_ready([], "", false)
         }
         assert_eq(output.len(), 1)
         assert((output.get(0) ?? "").contains("Open task"))
@@ -74,7 +74,7 @@ test "cmd_ready shows in_progress tasks" {
         db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'Active task', 'in_progress', 2)").unwrap()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_ready([], false)
+            cmd_ready([], "", false)
         }
         assert_eq(output.len(), 1)
         assert((output.get(0) ?? "").contains("Active task"))
@@ -88,7 +88,7 @@ test "cmd_ready excludes done and cancelled" {
         db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0002', 'Cancelled task', 'cancelled', 2)").unwrap()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_ready([], false)
+            cmd_ready([], "", false)
         }
         assert_eq(output.len(), 1)
         assert((output.get(0) ?? "").contains("No ready tasks."))
@@ -103,7 +103,7 @@ test "cmd_ready excludes blocked tasks" {
         db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_ready([], false)
+            cmd_ready([], "", false)
         }
         assert_eq(output.len(), 1)
         assert((output.get(0) ?? "").contains("Blocker"))
@@ -119,7 +119,7 @@ test "cmd_ready includes task whose blocker is done" {
         db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_ready([], false)
+            cmd_ready([], "", false)
         }
         assert_eq(output.len(), 1)
         assert((output.get(0) ?? "").contains("Unblocked now"))
@@ -131,7 +131,7 @@ test "cmd_add creates a task" {
         setup_test_db()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_add("My new task", "A description", 1, ["bug", "urgent"], "")
+            cmd_add("My new task", "A description", 1, ["bug", "urgent"], "", "")
         }
         assert_eq(output.len(), 1)
         assert((output.get(0) ?? "").contains("Created:"))
@@ -193,5 +193,221 @@ test "cmd_dep_add creates dependency" {
         assert_eq(rows.len(), 1)
         assert_eq(rows.get(0).unwrap().get_at(0) ?? "", "TASK0001")
         assert_eq(rows.get(0).unwrap().get_at(1) ?? "", "TASK0002")
+    }
+}
+
+// --- Projects ---
+
+fn project_id_by_name(name: Str) -> Str {
+    let row = db.query_one("SELECT id FROM projects WHERE name = {name}").unwrap().unwrap()
+    row.get_at(0) ?? ""
+}
+
+test "init_db adds project_id column to tasks" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        let cols = db.query("PRAGMA table_info(tasks)").unwrap()
+        let mut has_project_id = false
+        for col in cols {
+            if (col.get_at(1) ?? "") == "project_id" {
+                has_project_id = true
+            }
+        }
+        assert(has_project_id)
+    }
+}
+
+test "init_db is idempotent" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        setup_test_db()
+        let cols = db.query("PRAGMA table_info(tasks)").unwrap()
+        let mut project_id_count = 0
+        for col in cols {
+            if (col.get_at(1) ?? "") == "project_id" {
+                project_id_count = project_id_count + 1
+            }
+        }
+        assert_eq(project_id_count, 1)
+    }
+}
+
+test "build_project_clause empty ref" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        assert_eq(build_project_clause(""), "")
+    }
+}
+
+test "build_project_clause resolves to project id" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        let clause = build_project_clause("launch")
+        assert(clause.contains("t.project_id = 'PROJ0001'"))
+    }
+}
+
+test "resolve_project_id by exact name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        assert_eq(resolve_project_id("launch"), "PROJ0001")
+    }
+}
+
+test "resolve_project_id by id prefix" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('proj0001', 'launch')").unwrap()
+        assert_eq(resolve_project_id("proj00"), "proj0001")
+    }
+}
+
+test "cmd_project_add creates project" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_add("v2-launch", "Ship v2")
+        }
+        let rows = db.query("SELECT name, description, status FROM projects").unwrap()
+        assert_eq(rows.len(), 1)
+        let row = rows.get(0).unwrap()
+        assert_eq(row.get_at(0) ?? "", "v2-launch")
+        assert_eq(row.get_at(1) ?? "", "Ship v2")
+        assert_eq(row.get_at(2) ?? "", "active")
+    }
+}
+
+test "cmd_add assigns project" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_add("Member task", "", 2, [], "launch", "")
+        }
+        let rows = db.query("SELECT project_id FROM tasks").unwrap()
+        assert_eq(rows.len(), 1)
+        assert_eq(rows.get(0).unwrap().get_at(0) ?? "", "PROJ0001")
+    }
+}
+
+test "cmd_edit reassigns project" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'T', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_edit("TASK0001", "", "", -1, "", "launch", false, false)
+        }
+        let rows = db.query("SELECT project_id FROM tasks WHERE id = 'TASK0001'").unwrap()
+        assert_eq(rows.get(0).unwrap().get_at(0) ?? "", "PROJ0001")
+    }
+}
+
+test "cmd_edit clears project" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('TASK0001', 'T', 'open', 2, 'PROJ0001')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_edit("TASK0001", "", "", -1, "", "", true, false)
+        }
+        let row = db.query_one("SELECT project_id FROM tasks WHERE id = 'TASK0001'").unwrap().unwrap()
+        assert_eq(row.get_at(0) ?? "", "")
+    }
+}
+
+test "cmd_project_rm unlinks member tasks" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('TASK0001', 'Member', 'open', 2, 'PROJ0001')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_rm("launch")
+        }
+        let proj_rows = db.query("SELECT id FROM projects").unwrap()
+        assert_eq(proj_rows.len(), 0)
+        let task_rows = db.query("SELECT id FROM tasks WHERE id = 'TASK0001'").unwrap()
+        assert_eq(task_rows.len(), 1)
+        let row = db.query_one("SELECT project_id FROM tasks WHERE id = 'TASK0001'").unwrap().unwrap()
+        assert_eq(row.get_at(0) ?? "", "")
+    }
+}
+
+test "cmd_ls project filter returns only members" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('TASK0001', 'Member', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0002', 'Outsider', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ls("", [], "launch", false, false, false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Member"))
+        assert(!((output.get(0) ?? "").contains("Outsider")))
+    }
+}
+
+test "cmd_ready project filter returns only members" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('TASK0001', 'Member', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0002', 'Outsider', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], "launch", false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Member"))
+        assert(!((output.get(0) ?? "").contains("Outsider")))
+    }
+}
+
+test "project and repo tag are orthogonal" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('TASK0001', 'Both', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO tags (task_id, tag) VALUES ('TASK0001', 'repo:bridge')").unwrap()
+
+        let mut by_tag: List[Str] = []
+        with capture_print(by_tag) {
+            cmd_ls("", ["repo:bridge"], "", false, false, false)
+        }
+        assert_eq(by_tag.len(), 1)
+        assert((by_tag.get(0) ?? "").contains("Both"))
+
+        let mut by_proj: List[Str] = []
+        with capture_print(by_proj) {
+            cmd_ls("", [], "launch", false, false, false)
+        }
+        assert_eq(by_proj.len(), 1)
+        assert((by_proj.get(0) ?? "").contains("Both"))
+    }
+}
+
+test "project assignment does not affect ready/blocked DAG" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('BLOCKER1', 'Blocker', 'open', 1, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('BLOCKED1', 'Blocked', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], "launch", false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Blocker"))
+        assert(!((output.get(0) ?? "").contains("Blocked")))
     }
 }

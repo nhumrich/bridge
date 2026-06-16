@@ -8,6 +8,7 @@ Run `git rev-parse --show-toplevel` to get the repo basename. If in a git repo, 
 
 - In a repo: `br ready -t repo:<basename> --json`
 - Not in a repo: `br ready --json`
+- Scoped to a project: if the user names a project (or is clearly working one), add `--project <name>` to scope selection to that body of work, e.g. `br ready --project <name> --json`
 
 If no tasks are ready, run `br blocked --json`, report what's stuck, and ask the user how to proceed.
 

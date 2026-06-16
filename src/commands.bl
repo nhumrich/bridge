@@ -1,6 +1,6 @@
 import std.db
 import ulid.{generate_id}
-import display.{short_id, format_task_line, format_task_detail, format_activity_line, format_note_line}
+import display.{short_id, format_task_line, format_task_detail, format_activity_line, format_note_line, format_project_line}
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
 import std.path.{path_join}
 
@@ -44,6 +44,37 @@ pub fn resolve_id(prefix: Str) -> Str {
     }
     let row = rows.get(0).unwrap()
     row.get_at(0) ?? ""
+}
+
+pub fn resolve_project_id(ref: Str) -> Str {
+    let pattern = "{ref.to_lower()}%"
+    let rows = db.query("SELECT id FROM projects WHERE name = {ref} OR id LIKE {pattern}").unwrap()
+    if rows.is_empty() {
+        io.eprintln("No project matches: {ref}")
+        exit(1)
+    }
+    if rows.len() > 1 {
+        io.eprintln("Ambiguous project '{ref}', multiple matches")
+        exit(1)
+    }
+    let row = rows.get(0).unwrap()
+    row.get_at(0) ?? ""
+}
+
+pub fn build_project_clause(project_ref: Str) -> Str {
+    if project_ref.is_empty() {
+        return ""
+    }
+    let pid = resolve_project_id(project_ref)
+    "t.project_id = '{sql_escape(pid)}'"
+}
+
+fn project_name_for_task(task_id: Str) -> Str {
+    let row = db.query_one("SELECT p.name FROM projects p JOIN tasks t ON t.project_id = p.id WHERE t.id = {task_id}").unwrap()
+    match row {
+        Some(r) => r.get_at(0) ?? ""
+        None => ""
+    }
 }
 
 fn tags_list_for_task(task_id: Str) -> List[Str] {
@@ -151,10 +182,15 @@ fn check_title_len(title: Str) {
 
 // --- CRUD Commands ---
 
-pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str], session_id: Str) {
+pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str], project_ref: Str, session_id: Str) {
     check_title_len(title)
     let id = generate_id()
-    db.exec("INSERT INTO tasks (id, title, description, priority) VALUES ({id}, {title}, {description}, {priority})").unwrap()
+    if project_ref.is_empty() {
+        db.exec("INSERT INTO tasks (id, title, description, priority) VALUES ({id}, {title}, {description}, {priority})").unwrap()
+    } else {
+        let pid = resolve_project_id(project_ref)
+        db.exec("INSERT INTO tasks (id, title, description, priority, project_id) VALUES ({id}, {title}, {description}, {priority}, {pid})").unwrap()
+    }
 
     for tag in tag_list {
         db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ({id}, {tag})").unwrap()
@@ -164,7 +200,7 @@ pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str],
     io.println("Created: {short_id(id)}  {title}")
 }
 
-pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_closed: Bool, show_all: Bool) {
+pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json_mode: Bool, show_closed: Bool, show_all: Bool) {
     let mut where_parts: List[Str] = []
     if !status_filter.is_empty() {
         let sf = sql_escape(status_filter)
@@ -176,6 +212,10 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], json_mode: Bool, show_
     }
     for clause in build_tag_clauses(tag_filters) {
         where_parts.push(clause)
+    }
+    let project_clause = build_project_clause(project_ref)
+    if !project_clause.is_empty() {
+        where_parts.push(project_clause)
     }
     let where_clause = if where_parts.len() == 0 { "" } else { " WHERE {where_parts.join(" AND ")}" }
     let blocked_col = is_blocked_sql()
@@ -247,8 +287,9 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
 
     let unresolved = db.query("SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = {id} AND blocker.status NOT IN ('done', 'cancelled') LIMIT 1").unwrap()
     let is_blocked = !unresolved.is_empty()
+    let project = project_name_for_task(id)
 
-    io.println(format_task_detail(id, title, description, status, priority, created_at, updated_at, closed_at, tags, blocks_list.join(", "), depends_on_list.join(", "), is_blocked))
+    io.println(format_task_detail(id, title, description, status, priority, created_at, updated_at, closed_at, tags, project, blocks_list.join(", "), depends_on_list.join(", "), is_blocked))
 
     let activity_rows = db.query("SELECT action, session_id, project_path, created_at FROM activity_log WHERE task_id = {id} ORDER BY created_at ASC").unwrap()
     if !activity_rows.is_empty() {
@@ -274,7 +315,7 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     }
 }
 
-fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, append: Bool) {
+fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) {
     if !title.is_empty() {
         check_title_len(title)
     }
@@ -293,6 +334,12 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
         } else if status == "open" || status == "in_progress" {
             sets.push("closed_at = NULL")
         }
+    }
+    if clear_project {
+        sets.push("project_id = NULL")
+    } else if !project_ref.is_empty() {
+        let pid = resolve_project_id(project_ref)
+        sets.push("project_id = '{sql_escape(pid)}'")
     }
     if sets.len() == 0 && !has_desc {
         io.eprintln("Nothing to update")
@@ -323,38 +370,38 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
     io.println("Updated: {short_id(id)}")
 }
 
-pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, append: Bool) {
+pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) {
     let id = resolve_id(id_prefix)
-    edit_task(id, title, description, priority, status, append)
+    edit_task(id, title, description, priority, status, project_ref, clear_project, append)
 }
 
 pub fn cmd_start(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "in_progress", false)
+    edit_task(id, "", "", -1, "in_progress", "", false, false)
     log_activity(id, "started", session_id)
 }
 
 pub fn cmd_stop(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "open", false)
+    edit_task(id, "", "", -1, "open", "", false, false)
     log_activity(id, "stopped", session_id)
 }
 
 pub fn cmd_done(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "done", false)
+    edit_task(id, "", "", -1, "done", "", false, false)
     log_activity(id, "closed", session_id)
 }
 
 pub fn cmd_cancel(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "cancelled", false)
+    edit_task(id, "", "", -1, "cancelled", "", false, false)
     log_activity(id, "cancelled", session_id)
 }
 
 pub fn cmd_reopen(id_prefix: Str, session_id: Str) {
     let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "open", false)
+    edit_task(id, "", "", -1, "open", "", false, false)
     log_activity(id, "reopened", session_id)
 }
 
@@ -364,13 +411,152 @@ pub fn cmd_rm(id_prefix: Str) {
     io.println("Deleted: {short_id(id)}")
 }
 
+// --- Project Commands ---
+
+pub fn cmd_project_add(name: Str, description: Str) {
+    let existing = db.query("SELECT id FROM projects WHERE name = {name}").unwrap()
+    if !existing.is_empty() {
+        io.eprintln("Project name already taken: {name}")
+        exit(1)
+    }
+    let id = generate_id()
+    db.exec("INSERT INTO projects (id, name, description) VALUES ({id}, {name}, {description})").unwrap()
+    io.println("Created project: {short_id(id)}  {name}")
+}
+
+pub fn cmd_project_ls(json_mode: Bool) {
+    let rows = db.query("SELECT p.id, p.name, p.status, COALESCE(SUM(CASE WHEN t.status IN ('done', 'cancelled') THEN 1 ELSE 0 END), 0) as done, COUNT(t.id) as total FROM projects p LEFT JOIN tasks t ON t.project_id = p.id GROUP BY p.id ORDER BY p.created_at ASC").unwrap()
+
+    if json_mode {
+        io.println(rows_to_json(rows, ["id", "name", "status", "done", "total"]))
+        return
+    }
+
+    if rows.is_empty() {
+        io.println("No projects found.")
+        return
+    }
+
+    for row in rows {
+        let id = row.get_at(0) ?? ""
+        let name = row.get_at(1) ?? ""
+        let status = row.get_at(2) ?? ""
+        let done = (row.get_at(3) ?? "0").to_int()
+        let total = (row.get_at(4) ?? "0").to_int()
+        io.println(format_project_line(id, name, status, done, total))
+    }
+}
+
+pub fn cmd_project_show(ref: Str, json_mode: Bool) {
+    let id = resolve_project_id(ref)
+    let row = db.query_one("SELECT id, name, description, status, created_at, updated_at FROM projects WHERE id = {id}").unwrap().unwrap()
+    let name = row.get_at(1) ?? ""
+    let description = row.get_at(2) ?? ""
+    let status = row.get_at(3) ?? ""
+    let created_at = row.get_at(4) ?? ""
+    let updated_at = row.get_at(5) ?? ""
+
+    let blocked_col = is_blocked_sql()
+    let task_rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.project_id = {id} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+
+    if json_mode {
+        let obj = json_new_object()
+        json_set(obj, "id", json_new_str(id))
+        json_set(obj, "name", json_new_str(name))
+        json_set(obj, "description", json_new_str(description))
+        json_set(obj, "status", json_new_str(status))
+        json_set(obj, "created_at", json_new_str(created_at))
+        json_set(obj, "updated_at", json_new_str(updated_at))
+        let tasks_arr = json_new_array()
+        for tr in task_rows {
+            let tobj = json_new_object()
+            json_set(tobj, "id", json_new_str(tr.get_at(0) ?? ""))
+            json_set(tobj, "title", json_new_str(tr.get_at(1) ?? ""))
+            json_set(tobj, "priority", json_new_str(tr.get_at(2) ?? ""))
+            json_set(tobj, "status", json_new_str(tr.get_at(3) ?? ""))
+            json_set(tobj, "tags", json_new_str(tr.get_at(4) ?? ""))
+            json_push(tasks_arr, tobj)
+        }
+        json_set(obj, "tasks", tasks_arr)
+        io.println(json_encode(obj))
+        return
+    }
+
+    let mut done = 0
+    let total = task_rows.len()
+    for tr in task_rows {
+        let st = tr.get_at(3) ?? ""
+        if st == "done" || st == "cancelled" {
+            done = done + 1
+        }
+    }
+
+    io.println("Project: {short_id(id)}")
+    io.println("  Full ID:  {id}")
+    io.println("  Name:     {name}")
+    io.println("  Status:   {status}")
+    io.println("  Progress: {done}/{total}")
+    io.println("  Desc:     {description}")
+    io.println("  Created:  {created_at}")
+    io.println("  Updated:  {updated_at}")
+
+    if task_rows.is_empty() {
+        io.println("  Tasks:    (none)")
+        return
+    }
+    io.println("  Tasks:")
+    print_task_rows(parse_task_rows_with_blocked(task_rows, 5))
+}
+
+pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) {
+    let id = resolve_project_id(ref)
+    let mut sets: List[Str] = []
+    if !name.is_empty() {
+        sets.push("name = '{sql_escape(name)}'")
+    }
+    if !status.is_empty() {
+        let valid = ["active", "done", "archived"]
+        if !list_contains(valid, status) {
+            io.eprintln("Invalid status: {status} (must be active, done, or archived)")
+            exit(1)
+        }
+        sets.push("status = '{sql_escape(status)}'")
+    }
+    let has_desc = !description.is_empty()
+    if sets.len() == 0 && !has_desc {
+        io.eprintln("Nothing to update")
+        exit(1)
+    }
+    sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+    let set_clause = sets.join(", ")
+    if has_desc {
+        db.begin().unwrap()
+        db.exec("UPDATE projects SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+        db.exec("UPDATE projects SET description = {description} WHERE id = {id}").unwrap()
+        db.commit().unwrap()
+    } else {
+        db.exec("UPDATE projects SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+    }
+    io.println("Updated project: {short_id(id)}")
+}
+
+pub fn cmd_project_rm(ref: Str) {
+    let id = resolve_project_id(ref)
+    db.exec("DELETE FROM projects WHERE id = {id}").unwrap()
+    io.println("Deleted project: {short_id(id)}")
+}
+
 // --- DAG Commands ---
 
-pub fn cmd_ready(tag_filters: List[Str], json_mode: Bool) {
+pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
     let mut tag_clause = ""
     let tag_clauses = build_tag_clauses(tag_filters)
     if !tag_clauses.is_empty() {
         tag_clause = " AND {tag_clauses.join(" AND ")}"
+    }
+    let project_clause = build_project_clause(project_ref)
+    if !project_clause.is_empty() {
+        tag_clause = "{tag_clause} AND {project_clause}"
     }
     let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
@@ -447,11 +633,15 @@ pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) {
     io.println("Removed: {short_id(blocker_id)} no longer blocks {short_id(blocked_id)}")
 }
 
-pub fn cmd_blocked(tag_filters: List[Str], json_mode: Bool) {
+pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
     let mut tag_clause = ""
     let tag_clauses = build_tag_clauses(tag_filters)
     if !tag_clauses.is_empty() {
         tag_clause = " AND {tag_clauses.join(" AND ")}"
+    }
+    let project_clause = build_project_clause(project_ref)
+    if !project_clause.is_empty() {
+        tag_clause = "{tag_clause} AND {project_clause}"
     }
     let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC").unwrap()
 
@@ -662,7 +852,7 @@ pub fn cmd_tags() {
     }
 }
 
-pub fn cmd_stats(tag_filters: List[Str]) {
+pub fn cmd_stats(tag_filters: List[Str], project_ref: Str) {
     let mut tag_joins: List[Str] = []
     let mut tag_wheres: List[Str] = []
     let mut ti = 0
@@ -671,6 +861,10 @@ pub fn cmd_stats(tag_filters: List[Str]) {
         tag_joins.push(" JOIN tags tg{ti} ON tg{ti}.task_id = t.id")
         tag_wheres.push("tg{ti}.tag = '{tf}'")
         ti = ti + 1
+    }
+    let project_clause = build_project_clause(project_ref)
+    if !project_clause.is_empty() {
+        tag_wheres.push(project_clause)
     }
     let tag_join = tag_joins.join("")
     let tag_where = if tag_wheres.is_empty() { "" } else { " WHERE {tag_wheres.join(" AND ")}" }
