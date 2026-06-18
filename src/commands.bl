@@ -17,9 +17,45 @@ pub fn sql_escape(s: Str) -> Str {
     s.replace("'", "''")
 }
 
+// Set a task's status and keep closed_at in sync: stamp it on terminal states,
+// clear it on reopen. Shared by edit_task and cmd_vi so the two stay consistent.
+pub fn set_task_status(id: Str, status: Str) {
+    db.exec("UPDATE tasks SET status = {status} WHERE id = {id}").unwrap()
+    if status == "done" || status == "cancelled" {
+        db.exec("UPDATE tasks SET closed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
+    } else if status == "open" || status == "in_progress" {
+        db.exec("UPDATE tasks SET closed_at = NULL WHERE id = {id}").unwrap()
+    }
+}
+
 // Correlated subquery returning 1 if task t has at least one unresolved blocker.
 pub fn is_blocked_sql() -> Str {
     "CASE WHEN EXISTS (SELECT 1 FROM deps d JOIN tasks b ON b.id = d.blocker_id WHERE d.blocked_id = t.id AND b.status NOT IN ('done', 'cancelled')) THEN 1 ELSE 0 END"
+}
+
+// Variable-arity tag/project filters: the spliced clauses carry a runtime-variable
+// number of bound values, so Template parameterization is impossible here. These
+// leaf runners hold exactly one query each and confine the @allow footprint to a
+// single, reviewable statement. The spliced values are escaped by sql_escape upstream.
+
+@allow(RawBypassesParam)
+fn query_tasks_filtered(blocked_col: Str, where_clause: Str) -> List[Row] {
+    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+}
+
+@allow(RawBypassesParam)
+fn query_ready_filtered(tag_clause: Str) -> List[Row] {
+    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+}
+
+@allow(RawBypassesParam)
+fn query_blocked_filtered(tag_clause: Str) -> List[Row] {
+    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC").unwrap()
+}
+
+@allow(RawBypassesParam)
+fn query_stats_filtered(tag_join: Str, tag_where: Str) -> List[Row] {
+    db.query("SELECT t.status, COUNT(*) as count FROM tasks t{Raw(tag_join)}{Raw(tag_where)} GROUP BY t.status ORDER BY t.status").unwrap()
 }
 
 pub fn build_tag_clauses(tag_filters: List[Str]) -> List[Str] {
@@ -218,8 +254,7 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json
         where_parts.push(project_clause)
     }
     let where_clause = if where_parts.len() == 0 { "" } else { " WHERE {where_parts.join(" AND ")}" }
-    let blocked_col = is_blocked_sql()
-    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+    let rows = query_tasks_filtered(is_blocked_sql(), where_clause)
 
     if json_mode {
         io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags", "is_blocked"]))
@@ -319,54 +354,42 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
     if !title.is_empty() {
         check_title_len(title)
     }
-    let mut sets: List[Str] = []
-    if !title.is_empty() {
-        sets.push("title = '{sql_escape(title)}'")
-    }
     let has_desc = !description.is_empty()
-    if priority >= 0 {
-        sets.push("priority = {priority}")
-    }
-    if !status.is_empty() {
-        sets.push("status = '{sql_escape(status)}'")
-        if status == "done" || status == "cancelled" {
-            sets.push("closed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
-        } else if status == "open" || status == "in_progress" {
-            sets.push("closed_at = NULL")
-        }
-    }
-    if clear_project {
-        sets.push("project_id = NULL")
-    } else if !project_ref.is_empty() {
-        let pid = resolve_project_id(project_ref)
-        sets.push("project_id = '{sql_escape(pid)}'")
-    }
-    if sets.len() == 0 && !has_desc {
+    let touches_other = !title.is_empty() || priority >= 0 || !status.is_empty() || clear_project || !project_ref.is_empty()
+    if !touches_other && !has_desc {
         io.eprintln("Nothing to update")
         exit(1)
     }
-    sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
-    let set_clause = sets.join(", ")
-    let has_other = sets.len() > 1
 
-    if has_other && has_desc {
-        db.begin().unwrap()
-        db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+    let mut pid = ""
+    if !clear_project && !project_ref.is_empty() {
+        pid = resolve_project_id(project_ref)
+    }
+
+    db.begin().unwrap()
+    if !title.is_empty() {
+        db.exec("UPDATE tasks SET title = {title} WHERE id = {id}").unwrap()
+    }
+    if priority >= 0 {
+        db.exec("UPDATE tasks SET priority = {priority} WHERE id = {id}").unwrap()
+    }
+    if !status.is_empty() {
+        set_task_status(id, status)
+    }
+    if clear_project {
+        db.exec("UPDATE tasks SET project_id = NULL WHERE id = {id}").unwrap()
+    } else if !project_ref.is_empty() {
+        db.exec("UPDATE tasks SET project_id = {pid} WHERE id = {id}").unwrap()
+    }
+    if has_desc {
         if append {
             db.exec("UPDATE tasks SET description = description || '\n' || {description} WHERE id = {id}").unwrap()
         } else {
             db.exec("UPDATE tasks SET description = {description} WHERE id = {id}").unwrap()
         }
-        db.commit().unwrap()
-    } else if has_desc {
-        if append {
-            db.exec("UPDATE tasks SET description = description || '\n' || {description}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
-        } else {
-            db.exec("UPDATE tasks SET description = {description}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
-        }
-    } else {
-        db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
     }
+    db.exec("UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
+    db.commit().unwrap()
     io.println("Updated: {short_id(id)}")
 }
 
@@ -456,8 +479,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
     let created_at = row.get_at(4) ?? ""
     let updated_at = row.get_at(5) ?? ""
 
-    let blocked_col = is_blocked_sql()
-    let task_rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.project_id = {id} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+    let task_rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, CASE WHEN EXISTS (SELECT 1 FROM deps d JOIN tasks b ON b.id = d.blocker_id WHERE d.blocked_id = t.id AND b.status NOT IN ('done', 'cancelled')) THEN 1 ELSE 0 END as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.project_id = {id} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
     if json_mode {
         let obj = json_new_object()
@@ -510,33 +532,31 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
 
 pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) {
     let id = resolve_project_id(ref)
-    let mut sets: List[Str] = []
-    if !name.is_empty() {
-        sets.push("name = '{sql_escape(name)}'")
-    }
     if !status.is_empty() {
         let valid = ["active", "done", "archived"]
         if !list_contains(valid, status) {
             io.eprintln("Invalid status: {status} (must be active, done, or archived)")
             exit(1)
         }
-        sets.push("status = '{sql_escape(status)}'")
     }
     let has_desc = !description.is_empty()
-    if sets.len() == 0 && !has_desc {
+    if name.is_empty() && status.is_empty() && !has_desc {
         io.eprintln("Nothing to update")
         exit(1)
     }
-    sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
-    let set_clause = sets.join(", ")
-    if has_desc {
-        db.begin().unwrap()
-        db.exec("UPDATE projects SET {Raw(set_clause)} WHERE id = {id}").unwrap()
-        db.exec("UPDATE projects SET description = {description} WHERE id = {id}").unwrap()
-        db.commit().unwrap()
-    } else {
-        db.exec("UPDATE projects SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+
+    db.begin().unwrap()
+    if !name.is_empty() {
+        db.exec("UPDATE projects SET name = {name} WHERE id = {id}").unwrap()
     }
+    if !status.is_empty() {
+        db.exec("UPDATE projects SET status = {status} WHERE id = {id}").unwrap()
+    }
+    if has_desc {
+        db.exec("UPDATE projects SET description = {description} WHERE id = {id}").unwrap()
+    }
+    db.exec("UPDATE projects SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
+    db.commit().unwrap()
     io.println("Updated project: {short_id(id)}")
 }
 
@@ -558,7 +578,7 @@ pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
     if !project_clause.is_empty() {
         tag_clause = "{tag_clause} AND {project_clause}"
     }
-    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+    let rows = query_ready_filtered(tag_clause)
 
     if json_mode {
         io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags"]))
@@ -643,7 +663,7 @@ pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
     if !project_clause.is_empty() {
         tag_clause = "{tag_clause} AND {project_clause}"
     }
-    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC").unwrap()
+    let rows = query_blocked_filtered(tag_clause)
 
     if json_mode {
         io.println(rows_to_json(rows, ["id", "title", "priority", "status", "tags", "blockers"]))
@@ -720,8 +740,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
         where_parts.push(clause)
     }
     let where_clause = if where_parts.is_empty() { "" } else { " WHERE {where_parts.join(" AND ")}" }
-    let blocked_col = is_blocked_sql()
-    let rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+    let rows = query_tasks_filtered(is_blocked_sql(), where_clause)
 
     if rows.is_empty() {
         io.println("No tasks found.")
@@ -868,7 +887,7 @@ pub fn cmd_stats(tag_filters: List[Str], project_ref: Str) {
     }
     let tag_join = tag_joins.join("")
     let tag_where = if tag_wheres.is_empty() { "" } else { " WHERE {tag_wheres.join(" AND ")}" }
-    let rows = db.query("SELECT t.status, COUNT(*) as count FROM tasks t{Raw(tag_join)}{Raw(tag_where)} GROUP BY t.status ORDER BY t.status").unwrap()
+    let rows = query_stats_filtered(tag_join, tag_where)
     if rows.is_empty() {
         io.println("No tasks.")
         return
@@ -984,12 +1003,14 @@ pub fn cmd_vi(id_prefix: Str) {
         exit(1)
     }
 
-    let mut sets: List[Str] = []
     let mut changes: List[Str] = []
     let mut desc_changed = false
 
+    let mut title_changed = false
+    let mut priority_changed = false
+    let mut status_changed = false
     if new_title != old_title {
-        sets.push("title = '{sql_escape(new_title)}'")
+        title_changed = true
         changes.push("title")
     }
     if new_desc != old_desc.trim() {
@@ -997,14 +1018,11 @@ pub fn cmd_vi(id_prefix: Str) {
         changes.push("description")
     }
     if new_priority != old_priority {
-        sets.push("priority = {new_priority}")
+        priority_changed = true
         changes.push("priority")
     }
     if !new_status.is_empty() && new_status != old_status {
-        sets.push("status = '{sql_escape(new_status)}'")
-        if new_status == "done" || new_status == "cancelled" {
-            sets.push("closed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
-        }
+        status_changed = true
         changes.push("status")
     }
 
@@ -1030,26 +1048,24 @@ pub fn cmd_vi(id_prefix: Str) {
         }
     }
 
-    if sets.is_empty() && !desc_changed && tags_added.is_empty() && tags_removed.is_empty() {
+    if !title_changed && !priority_changed && !status_changed && !desc_changed && tags_added.is_empty() && tags_removed.is_empty() {
         io.println("Nothing changed.")
         return
     }
 
-    if !sets.is_empty() && desc_changed {
-        sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
-        let set_clause = sets.join(", ")
-        db.begin().unwrap()
-        db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
-        db.exec("UPDATE tasks SET description = {new_desc} WHERE id = {id}").unwrap()
-        db.commit().unwrap()
-    } else if desc_changed {
-        db.exec("UPDATE tasks SET description = {new_desc}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
-    } else if !sets.is_empty() {
-        sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
-        let set_clause = sets.join(", ")
-        db.exec("UPDATE tasks SET {Raw(set_clause)} WHERE id = {id}").unwrap()
+    db.begin().unwrap()
+    if title_changed {
+        db.exec("UPDATE tasks SET title = {new_title} WHERE id = {id}").unwrap()
     }
-
+    if priority_changed {
+        db.exec("UPDATE tasks SET priority = {new_priority} WHERE id = {id}").unwrap()
+    }
+    if status_changed {
+        set_task_status(id, new_status)
+    }
+    if desc_changed {
+        db.exec("UPDATE tasks SET description = {new_desc} WHERE id = {id}").unwrap()
+    }
     for ta in tags_added {
         db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ({id}, {ta})").unwrap()
         changes.push("+tag:{ta}")
@@ -1058,6 +1074,8 @@ pub fn cmd_vi(id_prefix: Str) {
         db.exec("DELETE FROM tags WHERE task_id = {id} AND tag = {tr}").unwrap()
         changes.push("-tag:{tr}")
     }
+    db.exec("UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
+    db.commit().unwrap()
 
     log_activity(id, "edited", "")
     io.println("Updated {sid}: {changes.join(", ")}")

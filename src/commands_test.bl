@@ -1,6 +1,6 @@
 import std.db
 import db.{init_db}
-import commands.{sql_escape, build_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_project_add, cmd_project_rm}
+import commands.{sql_escape, build_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_project_add, cmd_project_rm, set_task_status}
 import std.testing.{capture_print}
 
 fn setup_test_db() {
@@ -174,6 +174,28 @@ test "cmd_start marks task in_progress" {
         }
         let rows = db.query("SELECT status FROM tasks WHERE id = 'TASK0001'").unwrap()
         assert_eq(rows.get(0).unwrap().get_at(0) ?? "", "in_progress")
+    }
+}
+
+test "set_task_status to done sets closed_at" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'T', 'open', 2)").unwrap()
+        set_task_status("TASK0001", "done")
+        let row = db.query_one("SELECT status, closed_at FROM tasks WHERE id = 'TASK0001'").unwrap().unwrap()
+        assert_eq(row.get_at(0) ?? "", "done")
+        assert(!(row.get_at(1) ?? "").is_empty())
+    }
+}
+
+test "set_task_status reopen clears closed_at" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority, closed_at) VALUES ('TASK0001', 'T', 'done', 2, '2026-01-01T00:00:00Z')").unwrap()
+        set_task_status("TASK0001", "open")
+        let row = db.query_one("SELECT status, closed_at FROM tasks WHERE id = 'TASK0001'").unwrap().unwrap()
+        assert_eq(row.get_at(0) ?? "", "open")
+        assert_eq(row.get_at(1) ?? "", "")
     }
 }
 
