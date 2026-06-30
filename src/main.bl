@@ -140,6 +140,7 @@ fn build_parser() -> ArgParser {
     p = add_command(p, "graph", "Show dependency graph")
     p = command_add_positional(p, "graph", "id", "Task ID prefix (optional)")
     p = command_add_option(p, "graph", "-t", "", "Filter by tag")
+    p = command_add_option(p, "graph", "--project", "", "Filter by project")
     p = command_add_flag(p, "graph", "--all", "-a", "Include done/cancelled tasks")
 
     p = add_command(p, "vi", "Edit task in $EDITOR")
@@ -356,7 +357,8 @@ fn run() {
         let id = args_positional(a, 0)
         let tag_filters = args_get_all(a, "t")
         let show_all = args_has(a, "all")
-        cmd_graph(id, tag_filters, show_all)
+        let project_ref = args_get(a, "project")
+        cmd_graph(id, tag_filters, show_all, project_ref)
     } else if cmd == "vi" {
         let id = args_positional(a, 0)
         if id == "" {

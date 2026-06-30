@@ -731,13 +731,17 @@ fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: Tre
     }
 }
 
-pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool) {
+pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project_ref: Str) {
     let mut where_parts: List[Str] = []
     if !show_all {
         where_parts.push("t.status NOT IN ('done', 'cancelled')")
     }
     for clause in build_tag_clauses(tag_filters) {
         where_parts.push(clause)
+    }
+    let project_clause = build_project_clause(project_ref)
+    if !project_clause.is_empty() {
+        where_parts.push(project_clause)
     }
     let where_clause = if where_parts.is_empty() { "" } else { " WHERE {where_parts.join(" AND ")}" }
     let rows = query_tasks_filtered(is_blocked_sql(), where_clause)
