@@ -35,25 +35,25 @@ pub fn is_blocked_sql() -> Str {
 
 // Variable-arity tag/project filters: the spliced clauses carry a runtime-variable
 // number of bound values, so Template parameterization is impossible here. These
-// leaf runners hold exactly one query each and confine the @allow footprint to a
+// leaf runners hold exactly one query each and confine the @trusted footprint to a
 // single, reviewable statement. The spliced values are escaped by sql_escape upstream.
 
-@allow(RawBypassesParam)
+@trusted(audit: "BRIDGE-SQL-RAW")
 fn query_tasks_filtered(blocked_col: Str, where_clause: Str) -> List[Row] {
     db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 }
 
-@allow(RawBypassesParam)
+@trusted(audit: "BRIDGE-SQL-RAW")
 fn query_ready_filtered(tag_clause: Str) -> List[Row] {
     db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 }
 
-@allow(RawBypassesParam)
+@trusted(audit: "BRIDGE-SQL-RAW")
 fn query_blocked_filtered(tag_clause: Str) -> List[Row] {
     db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC").unwrap()
 }
 
-@allow(RawBypassesParam)
+@trusted(audit: "BRIDGE-SQL-RAW")
 fn query_stats_filtered(tag_join: Str, tag_where: Str) -> List[Row] {
     db.query("SELECT t.status, COUNT(*) as count FROM tasks t{Raw(tag_join)}{Raw(tag_where)} GROUP BY t.status ORDER BY t.status").unwrap()
 }
