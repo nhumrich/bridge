@@ -58,11 +58,25 @@ fn query_stats_filtered(tag_join: Str, tag_where: Str) -> List[Row] {
     db.query("SELECT t.status, COUNT(*) as count FROM tasks t{Raw(tag_join)}{Raw(tag_where)} GROUP BY t.status ORDER BY t.status").unwrap()
 }
 
+@trusted(audit: "BRIDGE-SQL-RAW")
+fn query_projects_filtered(where_clause: Str) -> List[Row] {
+    db.query("SELECT p.id, p.name, p.status, COALESCE(SUM(CASE WHEN t.status IN ('done', 'cancelled') THEN 1 ELSE 0 END), 0) as done, COUNT(t.id) as total, (SELECT COALESCE(GROUP_CONCAT(pt.tag, ', '), '') FROM project_tags pt WHERE pt.project_id = p.id) as tags FROM projects p LEFT JOIN tasks t ON t.project_id = p.id{Raw(where_clause)} GROUP BY p.id ORDER BY p.created_at ASC").unwrap()
+}
+
 pub fn build_tag_clauses(tag_filters: List[Str]) -> List[Str] {
     let mut clauses: List[Str] = []
     for tag in tag_filters {
         let tf = sql_escape(tag)
         clauses.push("EXISTS (SELECT 1 FROM tags tg WHERE tg.task_id = t.id AND tg.tag = '{tf}')")
+    }
+    clauses
+}
+
+pub fn build_project_tag_clauses(tag_filters: List[Str]) -> List[Str] {
+    let mut clauses: List[Str] = []
+    for tag in tag_filters {
+        let tf = sql_escape(tag)
+        clauses.push("EXISTS (SELECT 1 FROM project_tags pt WHERE pt.project_id = p.id AND pt.tag = '{tf}')")
     }
     clauses
 }
@@ -127,6 +141,18 @@ fn tags_list_for_task(task_id: Str) -> List[Str] {
 
 fn tags_for_task(task_id: Str) -> Str {
     tags_list_for_task(task_id).join(", ")
+}
+
+fn project_tags_list(project_id: Str) -> List[Str] {
+    let rows = db.query("SELECT tag FROM project_tags WHERE project_id = {project_id} ORDER BY tag ASC").unwrap()
+    let mut tags: List[Str] = []
+    for row in rows {
+        let tag = row.get_at(0) ?? ""
+        if !tag.is_empty() {
+            tags.push(tag)
+        }
+    }
+    tags
 }
 
 
@@ -436,7 +462,7 @@ pub fn cmd_rm(id_prefix: Str) {
 
 // --- Project Commands ---
 
-pub fn cmd_project_add(name: Str, description: Str) {
+pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) {
     let existing = db.query("SELECT id FROM projects WHERE name = {name}").unwrap()
     if !existing.is_empty() {
         io.eprintln("Project name already taken: {name}")
@@ -444,14 +470,24 @@ pub fn cmd_project_add(name: Str, description: Str) {
     }
     let id = generate_id()
     db.exec("INSERT INTO projects (id, name, description) VALUES ({id}, {name}, {description})").unwrap()
+
+    for tag in tag_list {
+        db.exec("INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES ({id}, {tag})").unwrap()
+    }
+
     io.println("Created project: {short_id(id)}  {name}")
 }
 
-pub fn cmd_project_ls(json_mode: Bool) {
-    let rows = db.query("SELECT p.id, p.name, p.status, COALESCE(SUM(CASE WHEN t.status IN ('done', 'cancelled') THEN 1 ELSE 0 END), 0) as done, COUNT(t.id) as total FROM projects p LEFT JOIN tasks t ON t.project_id = p.id GROUP BY p.id ORDER BY p.created_at ASC").unwrap()
+pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) {
+    let mut where_parts: List[Str] = []
+    for clause in build_project_tag_clauses(tag_filters) {
+        where_parts.push(clause)
+    }
+    let where_clause = if where_parts.is_empty() { "" } else { " WHERE {where_parts.join(" AND ")}" }
+    let rows = query_projects_filtered(where_clause)
 
     if json_mode {
-        io.println(rows_to_json(rows, ["id", "name", "status", "done", "total"]))
+        io.println(rows_to_json(rows, ["id", "name", "status", "done", "total", "tags"]))
         return
     }
 
@@ -466,7 +502,8 @@ pub fn cmd_project_ls(json_mode: Bool) {
         let status = row.get_at(2) ?? ""
         let done = (row.get_at(3) ?? "0").to_int()
         let total = (row.get_at(4) ?? "0").to_int()
-        io.println(format_project_line(id, name, status, done, total))
+        let tags = row.get_at(5) ?? ""
+        io.println(format_project_line(id, name, status, done, total, tags))
     }
 }
 
@@ -478,6 +515,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
     let status = row.get_at(3) ?? ""
     let created_at = row.get_at(4) ?? ""
     let updated_at = row.get_at(5) ?? ""
+    let project_tags = project_tags_list(id).join(", ")
 
     let task_rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, CASE WHEN EXISTS (SELECT 1 FROM deps d JOIN tasks b ON b.id = d.blocker_id WHERE d.blocked_id = t.id AND b.status NOT IN ('done', 'cancelled')) THEN 1 ELSE 0 END as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.project_id = {id} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
@@ -489,6 +527,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
         json_set(obj, "status", json_new_str(status))
         json_set(obj, "created_at", json_new_str(created_at))
         json_set(obj, "updated_at", json_new_str(updated_at))
+        json_set(obj, "tags", json_new_str(project_tags))
         let tasks_arr = json_new_array()
         for tr in task_rows {
             let tobj = json_new_object()
@@ -518,6 +557,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
     io.println("  Name:     {name}")
     io.println("  Status:   {status}")
     io.println("  Progress: {done}/{total}")
+    io.println("  Tags:     {project_tags}")
     io.println("  Desc:     {description}")
     io.println("  Created:  {created_at}")
     io.println("  Updated:  {updated_at}")
@@ -564,6 +604,22 @@ pub fn cmd_project_rm(ref: Str) {
     let id = resolve_project_id(ref)
     db.exec("DELETE FROM projects WHERE id = {id}").unwrap()
     io.println("Deleted project: {short_id(id)}")
+}
+
+pub fn cmd_project_tag(ref: Str, tags: List[Str]) {
+    let id = resolve_project_id(ref)
+    for tag in tags {
+        db.exec("INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES ({id}, {tag})").unwrap()
+    }
+    io.println("Tagged project: {short_id(id)}")
+}
+
+pub fn cmd_project_untag(ref: Str, tags: List[Str]) {
+    let id = resolve_project_id(ref)
+    for tag in tags {
+        db.exec("DELETE FROM project_tags WHERE project_id = {id} AND tag = {tag}").unwrap()
+    }
+    io.println("Untagged project: {short_id(id)}")
 }
 
 // --- DAG Commands ---

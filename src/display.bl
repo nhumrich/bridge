@@ -126,7 +126,7 @@ pub fn format_note_line(content: Str, source: Str, session_id: Str, created_at: 
     "{header}\n      {content}"
 }
 
-pub fn format_project_line(id: Str, name: Str, status: Str, done: Int, total: Int) -> Str {
+pub fn format_project_line(id: Str, name: Str, status: Str, done: Int, total: Int, tags: Str) -> Str {
     let sid = short_id(id)
     let color = use_color()
     let mut display_id = sid
@@ -137,5 +137,13 @@ pub fn format_project_line(id: Str, name: Str, status: Str, done: Int, total: In
         else if status == "done" { display_status = term.green(status) }
         else { display_status = term.dim(status) }
     }
-    "{display_id}  {name}  ({done}/{total})  {display_status}"
+    let mut tag_part = ""
+    if !tags.is_empty() {
+        if color {
+            tag_part = " [{term.magenta(tags)}]"
+        } else {
+            tag_part = " [{tags}]"
+        }
+    }
+    "{display_id}  {name}  ({done}/{total})  {display_status}{tag_part}"
 }

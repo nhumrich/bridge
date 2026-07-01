@@ -1,6 +1,6 @@
 import std.db
 import db.{init_db}
-import commands.{sql_escape, build_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_project_add, cmd_project_rm, set_task_status}
+import commands.{sql_escape, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status}
 import std.testing.{capture_print}
 
 fn setup_test_db() {
@@ -41,6 +41,31 @@ test "build_tag_clauses tag with quote" {
     let clauses = build_tag_clauses(["it's"])
     assert_eq(clauses.len(), 1)
     assert((clauses.get(0) ?? "").contains("tg.tag = 'it''s'"))
+}
+
+test "build_project_tag_clauses empty list" {
+    let clauses = build_project_tag_clauses([])
+    assert_eq(clauses.len(), 0)
+}
+
+test "build_project_tag_clauses single tag" {
+    let clauses = build_project_tag_clauses(["team:backend"])
+    assert_eq(clauses.len(), 1)
+    assert((clauses.get(0) ?? "").contains("pt.tag = 'team:backend'"))
+    assert((clauses.get(0) ?? "").contains("pt.project_id = p.id"))
+}
+
+test "build_project_tag_clauses multiple tags" {
+    let clauses = build_project_tag_clauses(["team:backend", "q3"])
+    assert_eq(clauses.len(), 2)
+    assert((clauses.get(0) ?? "").contains("pt.tag = 'team:backend'"))
+    assert((clauses.get(1) ?? "").contains("pt.tag = 'q3'"))
+}
+
+test "build_project_tag_clauses tag with quote" {
+    let clauses = build_project_tag_clauses(["it's"])
+    assert_eq(clauses.len(), 1)
+    assert((clauses.get(0) ?? "").contains("pt.tag = 'it''s'"))
 }
 
 test "list_contains found" {
@@ -291,7 +316,7 @@ test "cmd_project_add creates project" {
         setup_test_db()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_project_add("v2-launch", "Ship v2")
+            cmd_project_add("v2-launch", "Ship v2", [])
         }
         let rows = db.query("SELECT name, description, status FROM projects").unwrap()
         assert_eq(rows.len(), 1)
@@ -299,6 +324,113 @@ test "cmd_project_add creates project" {
         assert_eq(row.get_at(0) ?? "", "v2-launch")
         assert_eq(row.get_at(1) ?? "", "Ship v2")
         assert_eq(row.get_at(2) ?? "", "active")
+    }
+}
+
+test "cmd_project_add with tags inserts project_tags" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_add("API Rewrite", "", ["team:backend", "q3"])
+        }
+        let pid = project_id_by_name("API Rewrite")
+        let tag_rows = db.query("SELECT tag FROM project_tags WHERE project_id = {pid} ORDER BY tag ASC").unwrap()
+        assert_eq(tag_rows.len(), 2)
+        assert_eq(tag_rows.get(0).unwrap().get_at(0) ?? "", "q3")
+        assert_eq(tag_rows.get(1).unwrap().get_at(0) ?? "", "team:backend")
+    }
+}
+
+test "cmd_project_tag adds project_tags rows" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_tag("launch", ["urgent", "team:backend"])
+        }
+        let tag_rows = db.query("SELECT tag FROM project_tags WHERE project_id = 'PROJ0001' ORDER BY tag ASC").unwrap()
+        assert_eq(tag_rows.len(), 2)
+        assert_eq(tag_rows.get(0).unwrap().get_at(0) ?? "", "team:backend")
+        assert_eq(tag_rows.get(1).unwrap().get_at(0) ?? "", "urgent")
+    }
+}
+
+test "cmd_project_untag removes project_tags rows" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'urgent')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'q3')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_untag("launch", ["q3"])
+        }
+        let tag_rows = db.query("SELECT tag FROM project_tags WHERE project_id = 'PROJ0001'").unwrap()
+        assert_eq(tag_rows.len(), 1)
+        assert_eq(tag_rows.get(0).unwrap().get_at(0) ?? "", "urgent")
+    }
+}
+
+test "cmd_project_ls tag filter returns only tagged projects" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'backend-work')").unwrap()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0002', 'frontend-work')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'team:backend')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_ls(false, ["team:backend"])
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("backend-work"))
+        assert(!((output.get(0) ?? "").contains("frontend-work")))
+    }
+}
+
+test "cmd_project_ls shows project tags" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'backend-work')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'team:backend')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_ls(false, [])
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("team:backend"))
+    }
+}
+
+test "cmd_project_rm cascades project_tags" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'urgent')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_rm("launch")
+        }
+        let tag_rows = db.query("SELECT tag FROM project_tags WHERE project_id = 'PROJ0001'").unwrap()
+        assert_eq(tag_rows.len(), 0)
+    }
+}
+
+test "cmd_project_show renders Tags line" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'team:backend')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'urgent')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_show("launch", false)
+        }
+        let joined = output.join("\n")
+        assert(joined.contains("Tags:"))
+        assert(joined.contains("team:backend"))
+        assert(joined.contains("urgent"))
     }
 }
 
