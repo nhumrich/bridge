@@ -40,17 +40,17 @@ pub fn is_blocked_sql() -> Str {
 
 @trusted(audit: "BRIDGE-SQL-RAW")
 fn query_tasks_filtered(blocked_col: Str, where_clause: Str) -> List[Row] {
-    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked, COALESCE(p.name, '') as project FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id LEFT JOIN projects p ON p.id = t.project_id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 }
 
 @trusted(audit: "BRIDGE-SQL-RAW")
 fn query_ready_filtered(tag_clause: Str) -> List[Row] {
-    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, COALESCE(p.name, '') as project FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id LEFT JOIN projects p ON p.id = t.project_id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 }
 
 @trusted(audit: "BRIDGE-SQL-RAW")
 fn query_blocked_filtered(tag_clause: Str) -> List[Row] {
-    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC").unwrap()
+    db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers, COALESCE(p.name, '') as project FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id LEFT JOIN projects p ON p.id = t.project_id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC").unwrap()
 }
 
 @trusted(audit: "BRIDGE-SQL-RAW")
@@ -156,49 +156,56 @@ fn project_tags_list(project_id: Str) -> List[Str] {
 }
 
 
-type TaskRow { id: Str, title: Str, priority: Int, status: Str, tags: Str, is_blocked: Bool }
+type TaskRow { id: Str, title: Str, priority: Int, status: Str, tags: Str, is_blocked: Bool, project: Str }
 
-fn parse_task_row(row: Row) -> TaskRow {
+fn parse_task_row(row: Row, project_col: Int) -> TaskRow {
     TaskRow {
         id: row.get_at(0) ?? "",
         title: row.get_at(1) ?? "",
         priority: (row.get_at(2) ?? "2").to_int(),
         status: row.get_at(3) ?? "",
         tags: row.get_at(4) ?? "",
-        is_blocked: false
+        is_blocked: false,
+        project: row.get_at(project_col) ?? ""
     }
 }
 
-fn parse_task_row_with_blocked(row: Row, blocked_col: Int) -> TaskRow {
+fn parse_task_row_with_blocked(row: Row, blocked_col: Int, project_col: Int) -> TaskRow {
     TaskRow {
         id: row.get_at(0) ?? "",
         title: row.get_at(1) ?? "",
         priority: (row.get_at(2) ?? "2").to_int(),
         status: row.get_at(3) ?? "",
         tags: row.get_at(4) ?? "",
-        is_blocked: (row.get_at(blocked_col) ?? "0").to_int() != 0
+        is_blocked: (row.get_at(blocked_col) ?? "0").to_int() != 0,
+        project: row.get_at(project_col) ?? ""
     }
 }
 
-fn parse_task_rows(rows: List[Row]) -> List[TaskRow] {
+fn parse_task_rows(rows: List[Row], project_col: Int) -> List[TaskRow] {
     let mut result: List[TaskRow] = []
     for row in rows {
-        result.push(parse_task_row(row))
+        result.push(parse_task_row(row, project_col))
     }
     result
 }
 
-fn parse_task_rows_with_blocked(rows: List[Row], blocked_col: Int) -> List[TaskRow] {
+fn parse_task_rows_with_blocked(rows: List[Row], blocked_col: Int, project_col: Int) -> List[TaskRow] {
     let mut result: List[TaskRow] = []
     for row in rows {
-        result.push(parse_task_row_with_blocked(row, blocked_col))
+        result.push(parse_task_row_with_blocked(row, blocked_col, project_col))
     }
     result
 }
 
-fn print_task_rows(task_rows: List[TaskRow]) {
+fn gated_project(project: Str, show: Bool) -> Str {
+    if show { project } else { "" }
+}
+
+fn print_task_rows(task_rows: List[TaskRow], show_project: Bool) {
     for t in task_rows {
-        io.println(format_task_line(t.id, t.title, t.priority, t.status, t.tags, t.is_blocked))
+        let proj = gated_project(t.project, show_project)
+        io.println(format_task_line(t.id, t.title, t.priority, t.status, t.tags, t.is_blocked, proj))
     }
 }
 
@@ -292,7 +299,7 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json
         return
     }
 
-    print_task_rows(parse_task_rows_with_blocked(rows, 5))
+    print_task_rows(parse_task_rows_with_blocked(rows, 5, 6), project_ref.is_empty())
 }
 
 pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
@@ -517,7 +524,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
     let updated_at = row.get_at(5) ?? ""
     let project_tags = project_tags_list(id).join(", ")
 
-    let task_rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, CASE WHEN EXISTS (SELECT 1 FROM deps d JOIN tasks b ON b.id = d.blocker_id WHERE d.blocked_id = t.id AND b.status NOT IN ('done', 'cancelled')) THEN 1 ELSE 0 END as is_blocked FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id WHERE t.project_id = {id} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
+    let task_rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, CASE WHEN EXISTS (SELECT 1 FROM deps d JOIN tasks b ON b.id = d.blocker_id WHERE d.blocked_id = t.id AND b.status NOT IN ('done', 'cancelled')) THEN 1 ELSE 0 END as is_blocked, COALESCE(p.name, '') as project FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id LEFT JOIN projects p ON p.id = t.project_id WHERE t.project_id = {id} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
     if json_mode {
         let obj = json_new_object()
@@ -567,7 +574,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
         return
     }
     io.println("  Tasks:")
-    print_task_rows(parse_task_rows_with_blocked(task_rows, 5))
+    print_task_rows(parse_task_rows_with_blocked(task_rows, 5, 6), false)
 }
 
 pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) {
@@ -646,7 +653,7 @@ pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
         return
     }
 
-    print_task_rows(parse_task_rows(rows))
+    print_task_rows(parse_task_rows(rows, 5), project_ref.is_empty())
 }
 
 fn has_cycle(from_id: Str, to_id: Str) -> Bool {
@@ -731,10 +738,12 @@ pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
         return
     }
 
+    let show_project = project_ref.is_empty()
     for row in rows {
-        let t = parse_task_row(row)
+        let t = parse_task_row(row, 6)
         let blockers = row.get_at(5) ?? ""
-        let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags, true)
+        let proj = gated_project(t.project, show_project)
+        let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags, true, proj)
         io.println("{line}  (blocked by: {blockers})")
     }
 }
@@ -756,12 +765,14 @@ type TreeCtx {
     tasks: Map[Str, TaskRow],
     children: Map[Str, List[Str]],
     visited: Map[Str, Bool],
-    target_id: Str
+    target_id: Str,
+    show_project: Bool
 }
 
 fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: TreeCtx) {
     let t = ctx.tasks.get(task_id).unwrap()
-    let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags, t.is_blocked)
+    let proj = gated_project(t.project, ctx.show_project)
+    let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags, t.is_blocked, proj)
 
     let connector = if is_root { "" } else if is_last { "└── " } else { "├── " }
     let marker = if !ctx.target_id.is_empty() && task_id == ctx.target_id { "  <--" } else { "" }
@@ -809,7 +820,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project
 
     let mut tasks: Map[Str, TaskRow] = Map()
     for row in rows {
-        let t = parse_task_row_with_blocked(row, 5)
+        let t = parse_task_row_with_blocked(row, 5, 6)
         tasks.insert(t.id, t)
     }
 
@@ -893,7 +904,8 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project
         tasks: tasks,
         children: children,
         visited: Map(),
-        target_id: target_id
+        target_id: target_id,
+        show_project: project_ref.is_empty()
     }
     for root in roots {
         render_tree(root, "", false, true, ctx)

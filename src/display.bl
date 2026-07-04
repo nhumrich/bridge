@@ -53,7 +53,7 @@ fn sanitize_title(title: Str) -> Str {
     title.replace("\n", " ").replace("\r", " ").replace("\t", " ")
 }
 
-pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: Str, is_blocked: Bool) -> Str {
+pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: Str, is_blocked: Bool, project: Str) -> Str {
     let sid = short_id(id)
     let pstr = format_priority(priority)
     let sstr = format_status(status, is_blocked)
@@ -68,9 +68,17 @@ pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: S
             tag_part = " [{tags}]"
         }
     }
+    let mut proj_part = ""
+    if !project.is_empty() {
+        if color {
+            proj_part = "  ({term.dim(project)})"
+        } else {
+            proj_part = "  ({project})"
+        }
+    }
     let mut display_id = sid
     if color { display_id = term.cyan(sid) }
-    "{sstr} {display_id}  {pstr}  {display_title}{tag_part}"
+    "{sstr} {display_id}  {pstr}  {display_title}{proj_part}{tag_part}"
 }
 
 pub fn format_task_detail(id: Str, title: Str, description: Str, status: Str, priority: Int, created_at: Str, updated_at: Str, closed_at: Str, tags: Str, project: Str, blocks: Str, depends_on: Str, is_blocked: Bool) -> Str {

@@ -70,28 +70,38 @@ test "format_status blocked done still shows done" {
 }
 
 test "format_task_line basic with tags" {
-    let result = format_task_line("01ABCDEF99XYZWWW", "Fix the thing", 1, "open", "bug,urgent", false)
+    let result = format_task_line("01ABCDEF99XYZWWW", "Fix the thing", 1, "open", "bug,urgent", false, "")
     assert_eq(result, "[ ] 01ABCDEF  P1  Fix the thing [bug,urgent]")
 }
 
 test "format_task_line no tags" {
-    let result = format_task_line("01ABCDEF99XYZWWW", "Fix the thing", 2, "done", "", false)
+    let result = format_task_line("01ABCDEF99XYZWWW", "Fix the thing", 2, "done", "", false, "")
     assert_eq(result, "[x] 01ABCDEF  P2  Fix the thing")
 }
 
 test "format_task_line truncates long title" {
     let long_title = "This is a very long task title that definitely exceeds seventy-two characters and should be truncated"
-    let result = format_task_line("01ABCDEF99", long_title, 0, "open", "", false)
+    let result = format_task_line("01ABCDEF99", long_title, 0, "open", "", false, "")
     assert(result.contains("..."))
     assert(!result.contains("truncated"))
 }
 
 test "format_task_line sanitizes newlines and tabs" {
-    let result = format_task_line("01ABCDEF99", "line1\nline2\ttab", 3, "in_progress", "", false)
+    let result = format_task_line("01ABCDEF99", "line1\nline2\ttab", 3, "in_progress", "", false, "")
     assert_eq(result, "[~] 01ABCDEF  P3  line1 line2 tab")
 }
 
 test "format_task_line blocked shows bang glyph" {
-    let result = format_task_line("01ABCDEF99", "Waiting on dep", 2, "open", "", true)
+    let result = format_task_line("01ABCDEF99", "Waiting on dep", 2, "open", "", true, "")
     assert_eq(result, "[!] 01ABCDEF  P2  Waiting on dep")
+}
+
+test "format_task_line shows project between title and tags" {
+    let result = format_task_line("01ABCDEF99", "Fix parser", 2, "open", "urgent", false, "bridge")
+    assert_eq(result, "[ ] 01ABCDEF  P2  Fix parser  (bridge) [urgent]")
+}
+
+test "format_task_line empty project renders unchanged" {
+    let result = format_task_line("01ABCDEF99", "Fix parser", 2, "open", "urgent", false, "")
+    assert_eq(result, "[ ] 01ABCDEF  P2  Fix parser [urgent]")
 }
