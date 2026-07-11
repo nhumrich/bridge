@@ -1,6 +1,6 @@
 import std.db
 import ulid.{generate_id}
-import display.{short_id, format_task_line, format_task_detail, format_activity_line, format_note_line, format_project_line}
+import display.{short_id, format_priority, format_task_line, format_task_detail, format_activity_line, format_note_line, format_project_line}
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
 import std.path.{path_join}
 
@@ -251,7 +251,7 @@ fn check_title_len(title: Str) {
 
 // --- CRUD Commands ---
 
-pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str], project_ref: Str, session_id: Str) {
+pub fn cmd_add(title: Str, description: Str, priority: Int, priority_explicit: Bool, tag_list: List[Str], project_ref: Str, session_id: Str) {
     check_title_len(title)
     let id = generate_id()
     if project_ref.is_empty() {
@@ -267,6 +267,12 @@ pub fn cmd_add(title: Str, description: Str, priority: Int, tag_list: List[Str],
 
     log_activity(id, "created", session_id)
     io.println("Created: {short_id(id)}  {title}")
+    let plabel = format_priority(priority)
+    if priority_explicit {
+        io.println("Priority: {plabel}")
+    } else {
+        io.println("Priority: {plabel} (defaulted)")
+    }
 }
 
 pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json_mode: Bool, show_closed: Bool, show_all: Bool) {

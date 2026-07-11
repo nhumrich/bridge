@@ -186,12 +186,13 @@ fn run() {
             exit(1)
         }
         let priority_str = args_get(a, "p")
+        let priority_explicit = !priority_str.is_empty()
         let mut priority = 2
-        if !priority_str.is_empty() { priority = parse_priority(priority_str) }
+        if priority_explicit { priority = parse_priority(priority_str) }
         let description = args_get(a, "d")
         let tags = args_get_all(a, "t")
         let project_ref = args_get(a, "project")
-        cmd_add(title, description, priority, tags, project_ref, session_id)
+        cmd_add(title, description, priority, priority_explicit, tags, project_ref, session_id)
     } else if cmd == "ls" || cmd == "list" {
         let status_filter = args_get(a, "s")
         let tag_filters = args_get_all(a, "t")

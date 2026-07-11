@@ -156,11 +156,13 @@ test "cmd_add creates a task" {
         setup_test_db()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_add("My new task", "A description", 1, ["bug", "urgent"], "", "")
+            cmd_add("My new task", "A description", 1, true, ["bug", "urgent"], "", "")
         }
-        assert_eq(output.len(), 1)
+        assert_eq(output.len(), 2)
         assert((output.get(0) ?? "").contains("Created:"))
         assert((output.get(0) ?? "").contains("My new task"))
+        assert((output.get(1) ?? "").contains("P1"))
+        assert(!(output.get(1) ?? "").contains("defaulted"))
 
         let rows = db.query("SELECT id, title, description, priority FROM tasks").unwrap()
         assert_eq(rows.len(), 1)
@@ -173,6 +175,19 @@ test "cmd_add creates a task" {
         assert_eq(tag_rows.len(), 2)
         assert_eq(tag_rows.get(0).unwrap().get_at(0) ?? "", "bug")
         assert_eq(tag_rows.get(1).unwrap().get_at(0) ?? "", "urgent")
+    }
+}
+
+test "cmd_add flags a defaulted priority" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_add("Untriaged", "", 2, false, [], "", "")
+        }
+        assert_eq(output.len(), 2)
+        assert((output.get(1) ?? "").contains("P2"))
+        assert((output.get(1) ?? "").contains("defaulted"))
     }
 }
 
@@ -440,7 +455,7 @@ test "cmd_add assigns project" {
         db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
         let mut output: List[Str] = []
         with capture_print(output) {
-            cmd_add("Member task", "", 2, [], "launch", "")
+            cmd_add("Member task", "", 2, true, [], "launch", "")
         }
         let rows = db.query("SELECT project_id FROM tasks").unwrap()
         assert_eq(rows.len(), 1)
