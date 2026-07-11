@@ -36,7 +36,7 @@ Create an implementation plan:
 - execute the plan from above
 - As each task is completed:
   * verify the implementation works
-  * run /simplify on the solution
+  * run `/code-review --fix` on the solution
   * close the task: `br close <id>`
 - show the final summary
 
