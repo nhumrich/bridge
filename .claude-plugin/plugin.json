@@ -11,11 +11,6 @@
   ],
   "commands": [
     {
-      "name": "next",
-      "path": "commands/next.md",
-      "description": "Pick up the next ready task"
-    },
-    {
       "name": "plan-tasks",
       "path": "commands/plan-tasks.md",
       "description": "Break down a plan into tracked tasks with dependencies"
