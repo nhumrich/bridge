@@ -1,3 +1,7 @@
+---
+description: Close (complete) a task in Bridge. The user's input after `/br:close` identifies which task.
+---
+
 Close (complete) a task in Bridge. The user's input after `/br:close` identifies which task.
 
 If the input looks like an ID or prefix (short alphanumeric string), use it directly:

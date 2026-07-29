@@ -1161,13 +1161,8 @@ pub fn cmd_vi(id_prefix: Str) {
 
 pub fn cmd_install() {
     let home = env.var("HOME") ?? "/tmp"
-    let dest_dir = "{home}/.claude/commands"
-
-    let result = process_run("mkdir", ["-p", dest_dir])
-    if result.exit_code != 0 {
-        io.eprintln("Failed to create {dest_dir}")
-        exit(1)
-    }
+    let commands_dir = "{home}/.claude/commands"
+    let skills_dir = "{home}/.claude/skills"
 
     const CMD_ADD = #embed("../commands/br-add.md")
     const CMD_CLOSE = #embed("../commands/br-close.md")
@@ -1175,19 +1170,34 @@ pub fn cmd_install() {
     const CMD_NOTE = #embed("../commands/br-note.md")
     const CMD_PLAN = #embed("../commands/br-plan.md")
 
-    let names = ["br:add.md", "br:close.md", "br:next.md", "br:note.md", "br:plan.md"]
+    let names = ["add", "close", "next", "note", "plan"]
     let contents = [CMD_ADD, CMD_CLOSE, CMD_NEXT, CMD_NOTE, CMD_PLAN]
 
     let mut i = 0
     while i < names.len() {
         let name = names.get(i) ?? ""
         let content = contents.get(i) ?? ""
-        let dest = path_join(dest_dir, name)
-        write_file(dest, content)
-        io.println("  Installed: {name}")
+
+        let legacy_cmd = path_join(commands_dir, "br:{name}.md")
+        if file_exists(legacy_cmd) == 1 {
+            process_run("rm", ["-f", legacy_cmd])
+        }
+
+        let skill_dir = path_join(skills_dir, "br:{name}")
+        if file_exists(skill_dir) == 1 {
+            process_run("rm", ["-rf", skill_dir])
+        }
+
+        let result = process_run("mkdir", ["-p", skill_dir])
+        if result.exit_code != 0 {
+            io.eprintln("Failed to create {skill_dir}")
+            exit(1)
+        }
+        write_file(path_join(skill_dir, "SKILL.md"), content)
+        io.println("  Installed: br:{name}")
         i = i + 1
     }
-    io.println("Installed {names.len()} commands to {dest_dir}")
+    io.println("Installed {names.len()} commands as skills to {skills_dir}")
 
     install_bridge_md(home)
     install_hook(home)
@@ -1287,14 +1297,22 @@ fn install_hook(home: Str) {
 
 pub fn cmd_uninstall() {
     let home = env.var("HOME") ?? "/tmp"
-    let dest_dir = "{home}/.claude/commands"
-    let names = ["br:add.md", "br:close.md", "br:next.md", "br:note.md", "br:plan.md"]
+    let commands_dir = "{home}/.claude/commands"
+    let skills_dir = "{home}/.claude/skills"
+    let names = ["add", "close", "next", "note", "plan"]
     let mut removed = 0
     for name in names {
-        let dest = path_join(dest_dir, name)
-        if file_exists(dest) == 1 {
-            process_run("rm", ["-f", dest])
-            io.println("  Removed: {name}")
+        let legacy_cmd = path_join(commands_dir, "br:{name}.md")
+        if file_exists(legacy_cmd) == 1 {
+            process_run("rm", ["-f", legacy_cmd])
+            io.println("  Removed: br:{name}.md")
+            removed = removed + 1
+        }
+
+        let skill_dir = path_join(skills_dir, "br:{name}")
+        if file_exists(skill_dir) == 1 {
+            process_run("rm", ["-rf", skill_dir])
+            io.println("  Removed: br:{name}")
             removed = removed + 1
         }
     }
