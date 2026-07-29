@@ -21,6 +21,10 @@ fn parse_priority(s: Str) -> Int {
         io.eprintln("Invalid priority: {s}")
         exit(1)
     }
+    if n < 0 || n > 4 {
+        io.eprintln("Invalid priority: {s} (must be P0-P4)")
+        exit(1)
+    }
     n
 }
 
