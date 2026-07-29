@@ -1,6 +1,6 @@
 import std.db
 import db.{init_db}
-import commands.{sql_escape, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status}
+import commands.{sql_escape, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status, has_cycle}
 import std.testing.{capture_print}
 
 fn setup_test_db() {
@@ -151,6 +151,21 @@ test "cmd_ready includes task whose blocker is done" {
     }
 }
 
+test "cmd_ready includes task whose blocker is cancelled" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKER1', 'Blocker', 'cancelled', 1)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKED1', 'Unblocked now', 'open', 2)").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], "", false)
+        }
+        assert_eq(output.len(), 1)
+        assert((output.get(0) ?? "").contains("Unblocked now"))
+    }
+}
+
 test "cmd_add creates a task" {
     with db.connect(":memory:") {
         setup_test_db()
@@ -236,6 +251,48 @@ test "set_task_status reopen clears closed_at" {
         let row = db.query_one("SELECT status, closed_at FROM tasks WHERE id = 'TASK0001'").unwrap().unwrap()
         assert_eq(row.get_at(0) ?? "", "open")
         assert_eq(row.get_at(1) ?? "", "")
+    }
+}
+
+test "has_cycle detects transitive cycle" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASKA001', 'A', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASKB001', 'B', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASKC001', 'C', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_dep_add("TASKA001", "TASKB001")
+            cmd_dep_add("TASKB001", "TASKC001")
+        }
+        // Adding C -> A next would close A -> B -> C -> A into a cycle.
+        // This is the exact predicate cmd_dep_add checks before inserting;
+        // exercised directly here because the rejecting branch calls exit(1),
+        // which would abort the whole test binary if hit through cmd_dep_add.
+        assert(has_cycle("TASKC001", "TASKA001"))
+    }
+}
+
+test "cmd_dep_add accepts diamond dependency" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASKA001', 'A', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASKB001', 'B', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASKC001', 'C', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASKD001', 'D', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_dep_add("TASKA001", "TASKB001")
+            cmd_dep_add("TASKA001", "TASKC001")
+            cmd_dep_add("TASKB001", "TASKD001")
+            cmd_dep_add("TASKC001", "TASKD001")
+        }
+        assert_eq(output.len(), 4)
+        for line in output {
+            assert(line.contains("blocks"))
+        }
+        let rows = db.query("SELECT blocker_id, blocked_id FROM deps").unwrap()
+        assert_eq(rows.len(), 4)
     }
 }
 

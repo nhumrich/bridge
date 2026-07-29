@@ -393,6 +393,13 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
     if !title.is_empty() {
         check_title_len(title)
     }
+    if !status.is_empty() {
+        let valid = ["open", "in_progress", "done", "cancelled"]
+        if !list_contains(valid, status) {
+            io.eprintln("Invalid status: {status} (must be open, in_progress, done, or cancelled)")
+            exit(1)
+        }
+    }
     let has_desc = !description.is_empty()
     let touches_other = !title.is_empty() || priority >= 0 || !status.is_empty() || clear_project || !project_ref.is_empty()
     if !touches_other && !has_desc {
@@ -662,7 +669,7 @@ pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
     print_task_rows(parse_task_rows(rows, 5), project_ref.is_empty())
 }
 
-fn has_cycle(from_id: Str, to_id: Str) -> Bool {
+pub fn has_cycle(from_id: Str, to_id: Str) -> Bool {
     let all_deps = db.query("SELECT blocker_id, blocked_id FROM deps").unwrap()
     let mut adj: Map[Str, List[Str]] = Map()
     for dep in all_deps {
