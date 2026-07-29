@@ -1,3 +1,7 @@
+---
+description: Add a note to a Bridge task. The user's input after `/br:note` is the task reference and note content.
+---
+
 Add a note to a Bridge task. The user's input after `/br:note` is the task reference and note content.
 
 ## 1. Parse input

@@ -1,3 +1,7 @@
+---
+description: Add a task to Bridge. The user's input after `/br:add` is the task description.
+---
+
 Add a task to Bridge. The user's input after `/br:add` is the task description.
 
 Parse the user's intent to determine:

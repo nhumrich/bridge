@@ -1,3 +1,7 @@
+---
+description: Pick the best ready tasks (up to 5) and work them in parallel.
+---
+
 Pick the best ready tasks (up to 5) and work them in parallel.
 
 ## 1. Determine context

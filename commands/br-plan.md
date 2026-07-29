@@ -1,3 +1,7 @@
+---
+description: Break down work into Bridge tasks with dependencies for the current repo.
+---
+
 Break down work into Bridge tasks with dependencies for the current repo.
 
 The user's input after `/br:plan` describes what they want to accomplish.
