@@ -1302,16 +1302,21 @@ pub fn cmd_uninstall() {
     let names = ["add", "close", "next", "note", "plan"]
     let mut removed = 0
     for name in names {
+        let mut found = false
+
         let legacy_cmd = path_join(commands_dir, "br:{name}.md")
         if file_exists(legacy_cmd) == 1 {
             process_run("rm", ["-f", legacy_cmd])
-            io.println("  Removed: br:{name}.md")
-            removed = removed + 1
+            found = true
         }
 
         let skill_dir = path_join(skills_dir, "br:{name}")
         if file_exists(skill_dir) == 1 {
             process_run("rm", ["-rf", skill_dir])
+            found = true
+        }
+
+        if found {
             io.println("  Removed: br:{name}")
             removed = removed + 1
         }
