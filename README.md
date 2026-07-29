@@ -44,7 +44,7 @@ br install    # installs slash commands, bridge.md, and session hook
 br uninstall  # removes them
 ```
 
-`br install` writes slash commands to `~/.claude/commands/`, creates `~/.claude/bridge.md` with workflow instructions, and appends `@bridge.md` to your `~/.claude/CLAUDE.md` so Claude Code automatically knows how to use Bridge.
+`br install` writes slash commands to `~/.claude/skills/br:<name>/SKILL.md`, creates `~/.claude/bridge.md` with workflow instructions, and appends `@bridge.md` to your `~/.claude/CLAUDE.md` so Claude Code automatically knows how to use Bridge.
 
 ## Usage
 
