@@ -669,7 +669,7 @@ pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
     print_task_rows(parse_task_rows(rows, 5), project_ref.is_empty())
 }
 
-fn has_cycle(from_id: Str, to_id: Str) -> Bool {
+pub fn has_cycle(from_id: Str, to_id: Str) -> Bool {
     let all_deps = db.query("SELECT blocker_id, blocked_id FROM deps").unwrap()
     let mut adj: Map[Str, List[Str]] = Map()
     for dep in all_deps {
