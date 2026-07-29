@@ -12,7 +12,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/blinklang/blink:0.36
+      image: ghcr.io/blinklang/blink:0.53.1
     steps:
       - uses: actions/checkout@v4
 
