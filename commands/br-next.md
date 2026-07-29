@@ -6,9 +6,16 @@ Run `git rev-parse --show-toplevel` to get the repo basename. If in a git repo, 
 
 ## 2. Fetch ready tasks
 
-- In a repo: `br ready -t repo:<basename> --json`
-- Not in a repo: `br ready --json`
-- Scoped to a project: if the user names a project (or is clearly working one), add `--project <name>` to scope selection to that body of work, e.g. `br ready --project <name> --json`
+- In a repo: `br graph -t repo:<basename>`
+- Not in a repo: `br graph`
+- Scoped to a project: if the user names a project (or is clearly working one), add `--project <name>` to scope selection to that body of work, e.g. `br graph --project <name>`
+
+Reading the output:
+
+- Top-level rows (no tree glyph) are the ready tasks, already sorted P0→P4 then oldest-first.
+- Indented rows are blocked by the task above them. `[ ]` open, `[~]` in_progress, `[!]` blocked.
+- A root with children is high-leverage — closing it unblocks them.
+- Titles are truncated at 72 chars. If a candidate's title is cut off, run `br show <id>` for the full text.
 
 If no tasks are ready, run `br blocked --json`, report what's stuck, and ask the user how to proceed.
 
@@ -18,7 +25,7 @@ From the ready list, pick the best tasks to work on now:
 
 1. **Priority first** — P0 before P1 before P2, etc.
 2. **Repo relevance** — prefer tasks tagged with current repo
-3. **Unblocks others** — if you can tell a task is a dependency for blocked work, prefer it
+3. **Unblocks others** — prefer roots that have indented children under them, and more children over fewer
 4. **Skip vague/unclear tasks** — if a task title is ambiguous, deprioritize it
 
 Create an implementation plan:
