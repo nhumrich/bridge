@@ -1,0 +1,36 @@
+import commands.{try_validate_ls_flags}
+
+test "try_validate_ls_flags allows none set" {
+    let result = try_validate_ls_flags("", false, false)
+    assert(result.is_ok())
+}
+
+test "try_validate_ls_flags allows only status" {
+    let result = try_validate_ls_flags("done", false, false)
+    assert(result.is_ok())
+}
+
+test "try_validate_ls_flags allows only closed" {
+    let result = try_validate_ls_flags("", true, false)
+    assert(result.is_ok())
+}
+
+test "try_validate_ls_flags allows only all" {
+    let result = try_validate_ls_flags("", false, true)
+    assert(result.is_ok())
+}
+
+test "try_validate_ls_flags rejects all and closed" {
+    let result = try_validate_ls_flags("", true, true)
+    assert(result.is_err())
+}
+
+test "try_validate_ls_flags rejects status done and closed" {
+    let result = try_validate_ls_flags("done", true, false)
+    assert(result.is_err())
+}
+
+test "try_validate_ls_flags rejects status open and all" {
+    let result = try_validate_ls_flags("open", false, true)
+    assert(result.is_err())
+}

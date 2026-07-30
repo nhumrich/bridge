@@ -1,0 +1,223 @@
+import std.db
+import db.{init_db}
+import commands.{cmd_ls, cmd_ready, cmd_blocked, cmd_project_ls, cmd_show, cmd_project_show, cmd_edit}
+import std.testing.{capture_print}
+import std.json.{json_parse, json_type, json_get, json_at, json_len, json_as_str, json_as_int, json_as_bool, json_clear, JSON_ARRAY, JSON_BOOL, JSON_INT}
+
+fn setup_test_db() {
+    init_db()
+}
+
+fn long_string(n: Int) -> Str {
+    let sb = StringBuilder.new()
+    let mut i = 0
+    while i < n {
+        sb.write("x")
+        i = i + 1
+    }
+    sb.to_str()
+}
+
+fn seed_task_with_tag_and_project(id: Str) {
+    db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+    db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ({id}, 'T', 'open', 1, 'PROJ0001')").unwrap()
+    db.exec("INSERT INTO tags (task_id, tag) VALUES ({id}, 'bug')").unwrap()
+    db.exec("INSERT INTO tags (task_id, tag) VALUES ({id}, 'urgent')").unwrap()
+}
+
+test "cmd_ls json emits native types and previously-dropped fields" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        seed_task_with_tag_and_project("TASK0001")
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ls("", [], "", true, false, false)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        assert_eq(json_len(root), 1)
+        let obj = json_at(root, 0)
+
+        let priority_node = json_get(obj, "priority")
+        assert_eq(json_type(priority_node), JSON_INT)
+        assert_eq(json_as_int(priority_node), 1)
+
+        let blocked_node = json_get(obj, "is_blocked")
+        assert_eq(json_type(blocked_node), JSON_BOOL)
+        assert_eq(json_as_bool(blocked_node), 0)
+
+        let tags_node = json_get(obj, "tags")
+        assert_eq(json_type(tags_node), JSON_ARRAY)
+        assert_eq(json_len(tags_node), 2)
+
+        let project_node = json_get(obj, "project")
+        assert(project_node != -1)
+        assert_eq(json_as_str(project_node), "launch")
+    }
+}
+
+test "cmd_ls json marks is_blocked true when blocked" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKER1', 'Blocker', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKED1', 'Blocked', 'open', 2)").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ls("", [], "", true, false, false)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        let mut i = 0
+        let mut found = false
+        while i < json_len(root) {
+            let obj = json_at(root, i)
+            if json_as_str(json_get(obj, "id")) == "BLOCKED1" {
+                found = true
+                assert_eq(json_as_bool(json_get(obj, "is_blocked")), 1)
+            }
+            i = i + 1
+        }
+        assert(found)
+    }
+}
+
+test "cmd_ready json includes project field and int priority" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        seed_task_with_tag_and_project("TASK0001")
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], "", true)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        assert_eq(json_len(root), 1)
+        let obj = json_at(root, 0)
+        assert_eq(json_type(json_get(obj, "priority")), JSON_INT)
+        assert_eq(json_as_str(json_get(obj, "project")), "launch")
+        assert_eq(json_type(json_get(obj, "tags")), JSON_ARRAY)
+    }
+}
+
+test "cmd_blocked json emits blockers array and project field" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('BLOCKER1', 'Blocker', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('BLOCKED1', 'Blocked', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_blocked([], "", true)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        assert_eq(json_len(root), 1)
+        let obj = json_at(root, 0)
+        let blockers_node = json_get(obj, "blockers")
+        assert_eq(json_type(blockers_node), JSON_ARRAY)
+        assert_eq(json_len(blockers_node), 1)
+        assert_eq(json_as_str(json_at(blockers_node, 0)), "BLOCKER1")
+        assert_eq(json_as_str(json_get(obj, "project")), "launch")
+        assert_eq(json_type(json_get(obj, "priority")), JSON_INT)
+    }
+}
+
+test "cmd_project_ls json emits int done and total" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('TASK0001', 'A', 'done', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('TASK0002', 'B', 'open', 2, 'PROJ0001')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_ls(true, [])
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        assert_eq(json_len(root), 1)
+        let obj = json_at(root, 0)
+        assert_eq(json_type(json_get(obj, "done")), JSON_INT)
+        assert_eq(json_as_int(json_get(obj, "done")), 1)
+        assert_eq(json_type(json_get(obj, "total")), JSON_INT)
+        assert_eq(json_as_int(json_get(obj, "total")), 2)
+    }
+}
+
+test "cmd_show json includes tags project is_blocked and activity_log" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        seed_task_with_tag_and_project("TASK0001")
+        db.exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ('TASK0001', 'created', 's1', '/tmp')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_show("TASK0001", true)
+        }
+        json_clear()
+        let obj = json_parse(output.get(0) ?? "\{\}")
+        assert_eq(json_type(json_get(obj, "priority")), JSON_INT)
+        assert_eq(json_type(json_get(obj, "tags")), JSON_ARRAY)
+        assert_eq(json_len(json_get(obj, "tags")), 2)
+        assert_eq(json_as_str(json_get(obj, "project")), "launch")
+        assert_eq(json_type(json_get(obj, "is_blocked")), JSON_BOOL)
+        let activity_node = json_get(obj, "activity_log")
+        assert(activity_node != -1)
+        assert_eq(json_type(activity_node), JSON_ARRAY)
+        assert_eq(json_len(activity_node), 1)
+        assert_eq(json_as_str(json_get(json_at(activity_node, 0), "action")), "created")
+    }
+}
+
+test "cmd_project_show json includes done total and task is_blocked" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('BLOCKER1', 'Blocker', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('BLOCKED1', 'Blocked', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_show("launch", true)
+        }
+        json_clear()
+        let obj = json_parse(output.get(0) ?? "\{\}")
+        assert_eq(json_type(json_get(obj, "done")), JSON_INT)
+        assert_eq(json_as_int(json_get(obj, "done")), 0)
+        assert_eq(json_type(json_get(obj, "total")), JSON_INT)
+        assert_eq(json_as_int(json_get(obj, "total")), 2)
+
+        let tasks_node = json_get(obj, "tasks")
+        assert_eq(json_len(tasks_node), 2)
+        let mut i = 0
+        let mut found_blocked = false
+        while i < json_len(tasks_node) {
+            let t = json_at(tasks_node, i)
+            if json_as_str(json_get(t, "id")) == "BLOCKED1" {
+                found_blocked = true
+                assert_eq(json_type(json_get(t, "is_blocked")), JSON_BOOL)
+                assert_eq(json_as_bool(json_get(t, "is_blocked")), 1)
+            }
+            i = i + 1
+        }
+        assert(found_blocked)
+    }
+}
+
+// Regression test for 564jmt: br edit --desc with a payload larger than
+// SQLite's inlined-literal comfort zone (~4000 bytes) used to panic at the
+// unwrap() because db.exec failed on the oversized interpolated statement.
+// Fixed in 14615c1 by binding description as a Template[DB] parameter.
+test "cmd_edit with a description over 4000 bytes does not panic" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('TASK0001', 'T', 'open', 2)").unwrap()
+        let big_desc = long_string(5000)
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_edit("TASK0001", "", big_desc, -1, "", "", false, false)
+        }
+        let row = db.query_one("SELECT description FROM tasks WHERE id = 'TASK0001'").unwrap().unwrap()
+        assert_eq((row.get_at(0) ?? "").len(), 5000)
+    }
+}
