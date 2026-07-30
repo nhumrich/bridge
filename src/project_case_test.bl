@@ -1,6 +1,6 @@
 import std.db
 import db.{init_db}
-import commands.{try_resolve_project_id, try_project_name_available}
+import commands.{try_resolve_project_id, try_project_name_available, try_project_name_available_excluding}
 
 fn setup_test_db() {
     init_db()
@@ -67,6 +67,29 @@ test "try_project_name_available rejects a differently-cased duplicate" {
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Err("Project name already taken: foo")
         assert_eq(try_project_name_available("foo"), expected)
+    }
+}
+
+// A rename must not be blocked by the project's own row, otherwise re-casing
+// "Foo" to "foo" would be rejected as a duplicate of itself.
+test "try_project_name_available_excluding allows a project to re-case its own name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        let expected: Result[Str, Str] = Ok("foo")
+        assert_eq(try_project_name_available_excluding("foo", "p1aaaa"), expected)
+    }
+}
+
+// The guard cmd_project_edit relies on: renaming onto another project's
+// case-variant name is what makes both rows unresolvable by name.
+test "try_project_name_available_excluding rejects a rename onto another project's name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p2bbbb', 'Bar')").unwrap()
+        let expected: Result[Str, Str] = Err("Project name already taken: FOO")
+        assert_eq(try_project_name_available_excluding("FOO", "p2bbbb"), expected)
     }
 }
 

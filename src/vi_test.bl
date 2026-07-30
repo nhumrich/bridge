@@ -158,6 +158,17 @@ test "vi_tmp_path falls back to /tmp without TMPDIR" {
     assert(path.starts_with("/tmp/br-edit-abc123-"))
 }
 
+test "vi_tmp_path treats an empty TMPDIR as unset" {
+    let original = env.var("TMPDIR")
+    env.set_var("TMPDIR", "")
+    let path = vi_tmp_path("abc123")
+    match original {
+        Some(v) => env.set_var("TMPDIR", v)
+        None => env.remove_var("TMPDIR")
+    }
+    assert(path.starts_with("/tmp/br-edit-abc123-"))
+}
+
 test "vi_tmp_path differs across calls with the same sid" {
     let p1 = vi_tmp_path("sameid")
     let p2 = vi_tmp_path("sameid")

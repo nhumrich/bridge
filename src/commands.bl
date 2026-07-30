@@ -255,13 +255,20 @@ fn str_list_to_json_array(items: List[Str]) -> Int {
     arr
 }
 
-fn ls_task_row_to_json(t: TaskRow) -> Int {
+// The fields every task-shaped JSON row carries. Callers append their own extras
+// (is_blocked for ls, blockers for blocked) before the trailing "project" key.
+fn task_json_base(t: TaskRow) -> Int {
     let obj = json_new_object()
     json_set(obj, "id", json_new_str(t.id))
     json_set(obj, "title", json_new_str(t.title))
     json_set(obj, "priority", json_new_int(t.priority))
     json_set(obj, "status", json_new_str(t.status))
     json_set(obj, "tags", csv_to_json_array(t.tags))
+    obj
+}
+
+fn ls_task_row_to_json(t: TaskRow) -> Int {
+    let obj = task_json_base(t)
     json_set(obj, "is_blocked", json_new_bool(if t.is_blocked { 1 } else { 0 }))
     json_set(obj, "project", json_new_str(t.project))
     obj
@@ -278,12 +285,7 @@ fn ls_task_rows_to_json(task_rows: List[TaskRow]) -> Str {
 fn ready_task_rows_to_json(task_rows: List[TaskRow]) -> Str {
     let arr = json_new_array()
     for t in task_rows {
-        let obj = json_new_object()
-        json_set(obj, "id", json_new_str(t.id))
-        json_set(obj, "title", json_new_str(t.title))
-        json_set(obj, "priority", json_new_int(t.priority))
-        json_set(obj, "status", json_new_str(t.status))
-        json_set(obj, "tags", csv_to_json_array(t.tags))
+        let obj = task_json_base(t)
         json_set(obj, "project", json_new_str(t.project))
         json_push(arr, obj)
     }
@@ -295,12 +297,7 @@ fn blocked_rows_to_json(rows: List[Row]) -> Str {
     for row in rows {
         let t = parse_task_row(row, 6)
         let blockers = row.get_at(5) ?? ""
-        let obj = json_new_object()
-        json_set(obj, "id", json_new_str(t.id))
-        json_set(obj, "title", json_new_str(t.title))
-        json_set(obj, "priority", json_new_int(t.priority))
-        json_set(obj, "status", json_new_str(t.status))
-        json_set(obj, "tags", csv_to_json_array(t.tags))
+        let obj = task_json_base(t)
         json_set(obj, "blockers", csv_to_json_array(blockers))
         json_set(obj, "project", json_new_str(t.project))
         json_push(arr, obj)
@@ -325,9 +322,17 @@ pub fn cmd_note(id_prefix: Str, content: Str) {
     io.println("Note added to {short_id(id)}")
 }
 
-fn check_title_len(title: Str) {
+pub fn try_check_title_len(title: Str) -> Result[Str, Str] {
     if title.len() > 120 {
-        io.eprintln("Title too long (max 120 chars). Use -d for details.")
+        return Err("Title too long (max 120 chars). Use -d for details.")
+    }
+    Ok(title)
+}
+
+fn check_title_len(title: Str) {
+    let result = try_check_title_len(title)
+    if result.is_err() {
+        io.eprintln(result.unwrap_err())
         exit(1)
     }
 }
@@ -404,18 +409,19 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json
     }
     let where_clause = if where_parts.len() == 0 { "" } else { " WHERE {where_parts.join(" AND ")}" }
     let rows = query_tasks_filtered(is_blocked_sql(), where_clause)
+    let task_rows = parse_task_rows_with_blocked(rows, 5, 6)
 
     if json_mode {
-        io.println(ls_task_rows_to_json(parse_task_rows_with_blocked(rows, 5, 6)))
+        io.println(ls_task_rows_to_json(task_rows))
         return
     }
 
-    if rows.is_empty() {
+    if task_rows.is_empty() {
         io.println("No tasks found.")
         return
     }
 
-    print_task_rows(parse_task_rows_with_blocked(rows, 5, 6), project_ref.is_empty())
+    print_task_rows(task_rows, project_ref.is_empty())
 }
 
 pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
@@ -612,12 +618,18 @@ pub fn cmd_rm(id_prefix: Str) {
 
 // --- Project Commands ---
 
-pub fn try_project_name_available(name: Str) -> Result[Str, Str] {
-    let existing = db.query("SELECT id FROM projects WHERE name = {name} COLLATE NOCASE").unwrap()
+// exclude_id lets a rename keep its own row out of the collision check, so
+// re-casing a project ("Foo" -> "foo") stays legal. Pass "" to check a fresh name.
+pub fn try_project_name_available_excluding(name: Str, exclude_id: Str) -> Result[Str, Str] {
+    let existing = db.query("SELECT id FROM projects WHERE name = {name} COLLATE NOCASE AND id != {exclude_id}").unwrap()
     if !existing.is_empty() {
         return Err("Project name already taken: {name}")
     }
     Ok(name)
+}
+
+pub fn try_project_name_available(name: Str) -> Result[Str, Str] {
+    try_project_name_available_excluding(name, "")
 }
 
 pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) {
@@ -684,7 +696,8 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
     let status = row.get_at(3) ?? ""
     let created_at = row.get_at(4) ?? ""
     let updated_at = row.get_at(5) ?? ""
-    let project_tags = project_tags_list(id).join(", ")
+    let project_tag_list = project_tags_list(id)
+    let project_tags = project_tag_list.join(", ")
 
     let task_rows = db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, CASE WHEN EXISTS (SELECT 1 FROM deps d JOIN tasks b ON b.id = d.blocker_id WHERE d.blocked_id = t.id AND b.status NOT IN ('done', 'cancelled')) THEN 1 ELSE 0 END as is_blocked, COALESCE(p.name, '') as project FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id LEFT JOIN projects p ON p.id = t.project_id WHERE t.project_id = {id} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 
@@ -705,7 +718,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
         json_set(obj, "status", json_new_str(status))
         json_set(obj, "created_at", json_new_str(created_at))
         json_set(obj, "updated_at", json_new_str(updated_at))
-        json_set(obj, "tags", csv_to_json_array(project_tags))
+        json_set(obj, "tags", str_list_to_json_array(project_tag_list))
         json_set(obj, "done", json_new_int(done))
         json_set(obj, "total", json_new_int(total))
         let tasks_arr = json_new_array()
@@ -749,6 +762,16 @@ pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) {
     if name.is_empty() && status.is_empty() && !has_desc {
         io.eprintln("Nothing to update")
         exit(1)
+    }
+    // Without this, a rename can mint the case-variant duplicate that project add
+    // rejects, after which try_resolve_project_id calls both projects ambiguous and
+    // neither is reachable by name.
+    if !name.is_empty() {
+        let available = try_project_name_available_excluding(name, id)
+        if available.is_err() {
+            io.eprintln(available.unwrap_err())
+            exit(1)
+        }
     }
 
     db.begin().unwrap()
@@ -1189,9 +1212,7 @@ pub fn try_validate_edit_fields(title: Str, status: Str, priority: Int) -> Resul
     if title.is_empty() {
         return Err("Error: title cannot be empty")
     }
-    if title.len() > 120 {
-        return Err("Title too long (max 120 chars). Use -d for details.")
-    }
+    try_check_title_len(title)?
 
     let valid_statuses = ["open", "in_progress", "done", "cancelled"]
     if !status.is_empty() && !list_contains(valid_statuses, status) {
@@ -1236,7 +1257,11 @@ pub fn diff_tags(old_tags: List[Str], new_tags_str: Str) -> TagDiff {
 // same task never land on the same path. Not a fix for the TOCTOU class (see commit
 // message) — just eliminates the same-task collision.
 pub fn vi_tmp_path(sid: Str) -> Str {
-    let tmpdir = env.var("TMPDIR") ?? "/tmp"
+    let configured = env.var("TMPDIR") ?? ""
+    // An exported-but-empty TMPDIR would otherwise root the temp file at "/", where
+    // write_file (Void return, no error signal) fails silently and cmd_vi dies with a
+    // misleading "title cannot be empty".
+    let tmpdir = if configured.is_empty() { "/tmp" } else { configured }
     "{tmpdir}/br-edit-{sid}-{generate_id()}.txt"
 }
 
