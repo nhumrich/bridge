@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/blinklang/blink:0.53.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check
+        run: blink check src/main.bl
+
+      - name: Build
+        run: blink build src/main.bl --strict
+
+      - name: Test
+        run: blink test
