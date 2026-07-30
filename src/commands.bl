@@ -1017,50 +1017,12 @@ pub fn cmd_stats(tag_filters: List[Str], project_ref: Str) {
     }
 }
 
-pub fn cmd_vi(id_prefix: Str) {
-    let id = resolve_id(id_prefix)
-    let sid = short_id(id)
+type ParsedEdit { title: Str, priority: Int, status: Str, tags_str: Str, desc: Str }
+type TagDiff { added: List[Str], removed: List[Str] }
 
-    let row = db.query_one("SELECT title, description, status, priority FROM tasks WHERE id = {id}").unwrap().unwrap()
-    let old_title = row.get_at(0) ?? ""
-    let old_desc = row.get_at(1) ?? ""
-    let old_status = row.get_at(2) ?? "open"
-    let old_priority = (row.get_at(3) ?? "2").to_int()
-
-    let old_tags = tags_list_for_task(id)
-    let old_tags_str = old_tags.join(", ")
-
-    let mut lines: List[Str] = []
-    lines.push("# Edit task {sid}. Lines starting with # are ignored.")
-    lines.push("# Fields: title, priority (P0-P4), status (open/in_progress/done/cancelled), tags (comma-separated)")
-    lines.push("# Everything below --- is the description (freeform).")
-    lines.push("title: {old_title}")
-    lines.push("priority: P{old_priority}")
-    lines.push("status: {old_status}")
-    lines.push("tags: {old_tags_str}")
-    lines.push("---")
-    lines.push(old_desc)
-    let content = lines.join("\n")
-
-    let tmp_path = "/tmp/br-edit-{sid}.txt"
-    write_file(tmp_path, content)
-
-    let editor = env.var("EDITOR") ?? "vi"
-    let exit_code = shell_exec("{editor} {tmp_path}")
-    if exit_code != 0 {
-        process_run("rm", ["-f", tmp_path])
-        io.eprintln("Editor exited with error, aborting.")
-        exit(1)
-    }
-
-    let new_content = read_file(tmp_path)
-    process_run("rm", ["-f", tmp_path])
-
-    if new_content.trim() == content.trim() {
-        io.println("Nothing changed.")
-        return
-    }
-
+// Verbatim extraction of cmd_vi's header/body split + field parser, so the parsing
+// logic is reachable from tests without a live $EDITOR process.
+pub fn parse_vi_content(new_content: Str) -> ParsedEdit {
     let mut header = ""
     let mut body = ""
     let sep_idx = new_content.index_of("\n---\n")
@@ -1103,20 +1065,129 @@ pub fn cmd_vi(id_prefix: Str) {
 
     let new_desc = body.trim()
 
-    if new_title.is_empty() {
-        io.eprintln("Error: title cannot be empty")
-        exit(1)
+    ParsedEdit { title: new_title, priority: new_priority, status: new_status, tags_str: new_tags_str, desc: new_desc }
+}
+
+// Missing `status:` parses to "" and is accepted (status just isn't changed), but
+// missing `priority:` parses to the -1 sentinel, which is out of P0-P4 and hard-fails.
+// That asymmetry is intentional here, not a bug — see vi_test.bl for the pinning test.
+pub fn try_validate_edit_fields(title: Str, status: Str, priority: Int) -> Result[Str, Str] {
+    if title.is_empty() {
+        return Err("Error: title cannot be empty")
     }
-    check_title_len(new_title)
+    if title.len() > 120 {
+        return Err("Title too long (max 120 chars). Use -d for details.")
+    }
 
     let valid_statuses = ["open", "in_progress", "done", "cancelled"]
-    if !new_status.is_empty() && !list_contains(valid_statuses, new_status) {
-        io.eprintln("Invalid status: {new_status} (must be open, in_progress, done, or cancelled)")
+    if !status.is_empty() && !list_contains(valid_statuses, status) {
+        return Err("Invalid status: {status} (must be open, in_progress, done, or cancelled)")
+    }
+
+    if priority < 0 || priority > 4 {
+        return Err("Invalid priority: must be P0-P4")
+    }
+
+    Ok(title)
+}
+
+// Verbatim extraction of cmd_vi's tag-diffing logic.
+pub fn diff_tags(old_tags: List[Str], new_tags_str: Str) -> TagDiff {
+    let mut new_tags: List[Str] = []
+    if !new_tags_str.is_empty() {
+        let parts = new_tags_str.split(",")
+        for part in parts {
+            let t = part.trim()
+            if !t.is_empty() { new_tags.push(t) }
+        }
+    }
+
+    let mut tags_added: List[Str] = []
+    let mut tags_removed: List[Str] = []
+    for nt in new_tags {
+        if !list_contains(old_tags, nt) {
+            tags_added.push(nt)
+        }
+    }
+    for ot in old_tags {
+        if !list_contains(new_tags, ot) {
+            tags_removed.push(ot)
+        }
+    }
+
+    TagDiff { added: tags_added, removed: tags_removed }
+}
+
+// $TMPDIR + a fresh generate_id() suffix per call, so two concurrent `br vi` on the
+// same task never land on the same path. Not a fix for the TOCTOU class (see commit
+// message) — just eliminates the same-task collision.
+pub fn vi_tmp_path(sid: Str) -> Str {
+    let tmpdir = env.var("TMPDIR") ?? "/tmp"
+    "{tmpdir}/br-edit-{sid}-{generate_id()}.txt"
+}
+
+// Single-quote for POSIX shells: close the quote, escape the literal ', reopen it.
+// $TMPDIR is attacker-controllable input flowing into a shell_exec command line;
+// only the path gets quoted here, never the $EDITOR string (which legitimately
+// carries multiple words, e.g. "vim -u NONE").
+pub fn shell_quote(s: Str) -> Str {
+    "'{s.replace("'", "'\\''")}'"
+}
+
+pub fn cmd_vi(id_prefix: Str) {
+    let id = resolve_id(id_prefix)
+    let sid = short_id(id)
+
+    let row = db.query_one("SELECT title, description, status, priority FROM tasks WHERE id = {id}").unwrap().unwrap()
+    let old_title = row.get_at(0) ?? ""
+    let old_desc = row.get_at(1) ?? ""
+    let old_status = row.get_at(2) ?? "open"
+    let old_priority = (row.get_at(3) ?? "2").to_int()
+
+    let old_tags = tags_list_for_task(id)
+    let old_tags_str = old_tags.join(", ")
+
+    let mut lines: List[Str] = []
+    lines.push("# Edit task {sid}. Lines starting with # are ignored.")
+    lines.push("# Fields: title, priority (P0-P4), status (open/in_progress/done/cancelled), tags (comma-separated)")
+    lines.push("# Everything below --- is the description (freeform).")
+    lines.push("title: {old_title}")
+    lines.push("priority: P{old_priority}")
+    lines.push("status: {old_status}")
+    lines.push("tags: {old_tags_str}")
+    lines.push("---")
+    lines.push(old_desc)
+    let content = lines.join("\n")
+
+    let tmp_path = vi_tmp_path(sid)
+    write_file(tmp_path, content)
+
+    let editor = env.var("EDITOR") ?? "vi"
+    let exit_code = shell_exec("{editor} {shell_quote(tmp_path)}")
+    if exit_code != 0 {
+        process_run("rm", ["-f", tmp_path])
+        io.eprintln("Editor exited with error, aborting.")
         exit(1)
     }
 
-    if new_priority < 0 || new_priority > 4 {
-        io.eprintln("Invalid priority: must be P0-P4")
+    let new_content = read_file(tmp_path)
+    process_run("rm", ["-f", tmp_path])
+
+    if new_content.trim() == content.trim() {
+        io.println("Nothing changed.")
+        return
+    }
+
+    let parsed = parse_vi_content(new_content)
+    let new_title = parsed.title
+    let new_priority = parsed.priority
+    let new_status = parsed.status
+    let new_tags_str = parsed.tags_str
+    let new_desc = parsed.desc
+
+    let validated = try_validate_edit_fields(new_title, new_status, new_priority)
+    if validated.is_err() {
+        io.eprintln(validated.unwrap_err())
         exit(1)
     }
 
@@ -1143,27 +1214,9 @@ pub fn cmd_vi(id_prefix: Str) {
         changes.push("status")
     }
 
-    let mut new_tags: List[Str] = []
-    if !new_tags_str.is_empty() {
-        let parts = new_tags_str.split(",")
-        for part in parts {
-            let t = part.trim()
-            if !t.is_empty() { new_tags.push(t) }
-        }
-    }
-
-    let mut tags_added: List[Str] = []
-    let mut tags_removed: List[Str] = []
-    for nt in new_tags {
-        if !list_contains(old_tags, nt) {
-            tags_added.push(nt)
-        }
-    }
-    for ot in old_tags {
-        if !list_contains(new_tags, ot) {
-            tags_removed.push(ot)
-        }
-    }
+    let tag_diff = diff_tags(old_tags, new_tags_str)
+    let tags_added = tag_diff.added
+    let tags_removed = tag_diff.removed
 
     if !title_changed && !priority_changed && !status_changed && !desc_changed && tags_added.is_empty() && tags_removed.is_empty() {
         io.println("Nothing changed.")

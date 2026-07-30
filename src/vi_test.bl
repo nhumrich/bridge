@@ -1,0 +1,180 @@
+import commands.{parse_vi_content, try_validate_edit_fields, diff_tags, vi_tmp_path, shell_quote}
+
+// --- parse_vi_content ---
+
+test "parse_vi_content well-formed input" {
+    let content = "# comment\ntitle: My Task\npriority: P2\nstatus: in_progress\ntags: a, b\n---\nSome description\nmore text"
+    let parsed = parse_vi_content(content)
+    assert_eq(parsed.title, "My Task")
+    assert_eq(parsed.priority, 2)
+    assert_eq(parsed.status, "in_progress")
+    assert_eq(parsed.tags_str, "a, b")
+    assert_eq(parsed.desc, "Some description\nmore text")
+}
+
+test "parse_vi_content missing priority and status lines" {
+    let content = "title: Bare Task\n---\nDesc here"
+    let parsed = parse_vi_content(content)
+    assert_eq(parsed.title, "Bare Task")
+    assert_eq(parsed.priority, -1)
+    assert_eq(parsed.status, "")
+    assert_eq(parsed.tags_str, "")
+    assert_eq(parsed.desc, "Desc here")
+}
+
+test "parse_vi_content multi-line description" {
+    let content = "title: T\npriority: P1\nstatus: open\ntags: \n---\nline one\nline two\nline three"
+    let parsed = parse_vi_content(content)
+    assert_eq(parsed.desc, "line one\nline two\nline three")
+}
+
+test "parse_vi_content ignores unknown or garbage lines" {
+    let content = "title: T\ngarbage line here\nrandom: nonsense\npriority: P3\n---\ndesc"
+    let parsed = parse_vi_content(content)
+    assert_eq(parsed.title, "T")
+    assert_eq(parsed.priority, 3)
+    assert_eq(parsed.desc, "desc")
+}
+
+test "parse_vi_content no separator at all" {
+    let content = "title: OnlyHeader\npriority: P1"
+    let parsed = parse_vi_content(content)
+    assert_eq(parsed.title, "OnlyHeader")
+    assert_eq(parsed.priority, 1)
+    assert_eq(parsed.desc, "")
+}
+
+test "parse_vi_content separator with no trailing body" {
+    let content = "title: NoBody\npriority: P0\n---"
+    let parsed = parse_vi_content(content)
+    assert_eq(parsed.title, "NoBody")
+    assert_eq(parsed.priority, 0)
+    assert_eq(parsed.desc, "")
+}
+
+// --- try_validate_edit_fields ---
+
+test "try_validate_edit_fields happy path" {
+    let result = try_validate_edit_fields("Task", "open", 2)
+    assert(result.is_ok())
+}
+
+test "try_validate_edit_fields empty title errors" {
+    let result = try_validate_edit_fields("", "open", 2)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "Error: title cannot be empty")
+}
+
+test "try_validate_edit_fields title too long errors" {
+    let mut long_title = ""
+    let mut i = 0
+    while i < 121 {
+        long_title = "{long_title}a"
+        i = i + 1
+    }
+    let result = try_validate_edit_fields(long_title, "open", 2)
+    assert(result.is_err())
+}
+
+test "try_validate_edit_fields bad status errors" {
+    let result = try_validate_edit_fields("Task", "bogus", 2)
+    assert(result.is_err())
+    assert(result.unwrap_err().contains("Invalid status"))
+}
+
+test "try_validate_edit_fields out-of-range priority errors" {
+    let result = try_validate_edit_fields("Task", "open", 5)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "Invalid priority: must be P0-P4")
+}
+
+// Documents an intentional asymmetry: a missing `status:` line parses to "" and is
+// accepted (status simply isn't changed), but a missing `priority:` line parses to
+// the -1 sentinel, which is out of P0-P4 range and hard-fails. Pin this, don't "fix" it.
+test "try_validate_edit_fields missing priority sentinel hard-fails while missing status does not" {
+    let result = try_validate_edit_fields("Task", "", -1)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "Invalid priority: must be P0-P4")
+}
+
+// --- diff_tags ---
+
+test "diff_tags added only" {
+    let diff = diff_tags(["a"], "a, b")
+    assert_eq(diff.added.len(), 1)
+    assert_eq(diff.added.get(0) ?? "", "b")
+    assert_eq(diff.removed.len(), 0)
+}
+
+test "diff_tags removed only" {
+    let diff = diff_tags(["a", "b"], "a")
+    assert_eq(diff.added.len(), 0)
+    assert_eq(diff.removed.len(), 1)
+    assert_eq(diff.removed.get(0) ?? "", "b")
+}
+
+test "diff_tags both added and removed" {
+    let diff = diff_tags(["a", "b"], "b, c")
+    assert_eq(diff.added.len(), 1)
+    assert_eq(diff.added.get(0) ?? "", "c")
+    assert_eq(diff.removed.len(), 1)
+    assert_eq(diff.removed.get(0) ?? "", "a")
+}
+
+test "diff_tags no change" {
+    let diff = diff_tags(["a", "b"], "a, b")
+    assert_eq(diff.added.len(), 0)
+    assert_eq(diff.removed.len(), 0)
+}
+
+test "diff_tags whitespace handling" {
+    let diff = diff_tags(["a", "b"], " a , b ,  c  ")
+    assert_eq(diff.added.len(), 1)
+    assert_eq(diff.added.get(0) ?? "", "c")
+    assert_eq(diff.removed.len(), 0)
+}
+
+// --- vi_tmp_path ---
+
+test "vi_tmp_path respects TMPDIR" {
+    let original = env.var("TMPDIR")
+    env.set_var("TMPDIR", "/tmp/custom-vi-dir")
+    let path = vi_tmp_path("abc123")
+    match original {
+        Some(v) => env.set_var("TMPDIR", v)
+        None => env.remove_var("TMPDIR")
+    }
+    assert(path.starts_with("/tmp/custom-vi-dir/br-edit-abc123-"))
+}
+
+test "vi_tmp_path falls back to /tmp without TMPDIR" {
+    let original = env.var("TMPDIR")
+    env.remove_var("TMPDIR")
+    let path = vi_tmp_path("abc123")
+    match original {
+        Some(v) => env.set_var("TMPDIR", v)
+        None => env.remove_var("TMPDIR")
+    }
+    assert(path.starts_with("/tmp/br-edit-abc123-"))
+}
+
+test "vi_tmp_path differs across calls with the same sid" {
+    let p1 = vi_tmp_path("sameid")
+    let p2 = vi_tmp_path("sameid")
+    assert_ne(p1, p2)
+}
+
+// --- shell_quote ---
+
+test "shell_quote wraps a plain path" {
+    assert_eq(shell_quote("/tmp/foo.txt"), "'/tmp/foo.txt'")
+}
+
+test "shell_quote escapes a single quote" {
+    let quoted = shell_quote("/tmp/o'Brien/file.txt")
+    assert_eq(quoted, "'/tmp/o'\\''Brien/file.txt'")
+}
+
+test "shell_quote handles a path with a space" {
+    assert_eq(shell_quote("/tmp/my dir/file.txt"), "'/tmp/my dir/file.txt'")
+}
