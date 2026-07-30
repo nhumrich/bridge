@@ -17,6 +17,13 @@ pub fn sql_escape(s: Str) -> Str {
     s.replace("'", "''")
 }
 
+// Neutralize LIKE metacharacters so a user-supplied prefix matches literally.
+// Pairs with `ESCAPE '!'` in the query. Order matters: doubling `!` last would
+// also double the `!` that the % and _ passes just introduced, un-escaping them.
+pub fn escape_like_pattern(s: Str) -> Str {
+    s.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+}
+
 // Set a task's status and keep closed_at in sync: stamp it on terminal states,
 // clear it on reopen. Shared by edit_task and cmd_vi so the two stay consistent.
 pub fn set_task_status(id: Str, status: Str) {
@@ -81,34 +88,50 @@ pub fn build_project_tag_clauses(tag_filters: List[Str]) -> List[Str] {
     clauses
 }
 
-pub fn resolve_id(prefix: Str) -> Str {
-    let pattern = "{prefix.to_lower()}%"
-    let rows = db.query("SELECT id FROM tasks WHERE id LIKE {pattern}").unwrap()
+// The exit-free core of resolve_id, so the no-match and ambiguous paths are
+// reachable from tests: exit(1) would kill the whole test binary.
+pub fn try_resolve_id(prefix: Str) -> Result[Str, Str] {
+    let pattern = "{escape_like_pattern(prefix.to_lower())}%"
+    let rows = db.query("SELECT id FROM tasks WHERE id LIKE {pattern} ESCAPE '!'").unwrap()
     if rows.is_empty() {
-        io.eprintln("No task matches prefix: {prefix}")
-        exit(1)
+        return Err("No task matches prefix: {prefix}")
     }
     if rows.len() > 1 {
-        io.eprintln("Ambiguous prefix '{prefix}', multiple matches")
+        return Err("Ambiguous prefix '{prefix}', multiple matches")
+    }
+    Ok(rows.get(0).unwrap().get_at(0) ?? "")
+}
+
+pub fn resolve_id(prefix: Str) -> Str {
+    let result = try_resolve_id(prefix)
+    if result.is_err() {
+        io.eprintln(result.unwrap_err())
         exit(1)
     }
-    let row = rows.get(0).unwrap()
-    row.get_at(0) ?? ""
+    result.unwrap()
+}
+
+pub fn try_resolve_project_id(ref: Str) -> Result[Str, Str] {
+    // Only the LIKE arm is escaped; `name = {ref}` is exact equality, and escaping
+    // it would break projects whose names legitimately contain % or _.
+    let pattern = "{escape_like_pattern(ref.to_lower())}%"
+    let rows = db.query("SELECT id FROM projects WHERE name = {ref} OR id LIKE {pattern} ESCAPE '!'").unwrap()
+    if rows.is_empty() {
+        return Err("No project matches: {ref}")
+    }
+    if rows.len() > 1 {
+        return Err("Ambiguous project '{ref}', multiple matches")
+    }
+    Ok(rows.get(0).unwrap().get_at(0) ?? "")
 }
 
 pub fn resolve_project_id(ref: Str) -> Str {
-    let pattern = "{ref.to_lower()}%"
-    let rows = db.query("SELECT id FROM projects WHERE name = {ref} OR id LIKE {pattern}").unwrap()
-    if rows.is_empty() {
-        io.eprintln("No project matches: {ref}")
+    let result = try_resolve_project_id(ref)
+    if result.is_err() {
+        io.eprintln(result.unwrap_err())
         exit(1)
     }
-    if rows.len() > 1 {
-        io.eprintln("Ambiguous project '{ref}', multiple matches")
-        exit(1)
-    }
-    let row = rows.get(0).unwrap()
-    row.get_at(0) ?? ""
+    result.unwrap()
 }
 
 pub fn build_project_clause(project_ref: Str) -> Str {

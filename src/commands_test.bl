@@ -1,6 +1,6 @@
 import std.db
 import db.{init_db}
-import commands.{sql_escape, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status, has_cycle}
+import commands.{sql_escape, escape_like_pattern, try_resolve_id, try_resolve_project_id, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status, has_cycle}
 import std.testing.{capture_print}
 
 fn setup_test_db() {
@@ -693,5 +693,124 @@ test "project assignment does not affect ready/blocked DAG" {
         assert_eq(output.len(), 1)
         assert((output.get(0) ?? "").contains("Blocker"))
         assert(!((output.get(0) ?? "").contains("Blocked")))
+    }
+}
+
+test "escape_like_pattern leaves plain text untouched" {
+    assert_eq(escape_like_pattern("abc123"), "abc123")
+}
+
+test "escape_like_pattern escapes percent" {
+    assert_eq(escape_like_pattern("50%"), "50!%")
+}
+
+test "escape_like_pattern escapes underscore" {
+    assert_eq(escape_like_pattern("a_b"), "a!_b")
+}
+
+test "escape_like_pattern doubles the escape char first" {
+    assert_eq(escape_like_pattern("!%"), "!!!%")
+}
+
+test "try_resolve_id returns Ok on exact match" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Ok("abc123")
+        assert_eq(try_resolve_id("abc123"), expected)
+    }
+}
+
+test "try_resolve_id returns Ok on unique prefix" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('xyz789', 'Two', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Ok("abc123")
+        assert_eq(try_resolve_id("abc"), expected)
+    }
+}
+
+test "try_resolve_id returns Err on no match" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Err("No task matches prefix: zzz")
+        assert_eq(try_resolve_id("zzz"), expected)
+    }
+}
+
+test "try_resolve_id returns Err on ambiguous prefix" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc456', 'Two', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Err("Ambiguous prefix 'abc', multiple matches")
+        assert_eq(try_resolve_id("abc"), expected)
+    }
+}
+
+test "try_resolve_id lowercases the prefix before matching" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Ok("abc123")
+        assert_eq(try_resolve_id("ABC1"), expected)
+    }
+}
+
+test "try_resolve_id does not treat percent as a wildcard" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('xyz789', 'Two', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Err("No task matches prefix: %")
+        assert_eq(try_resolve_id("%"), expected)
+    }
+}
+
+test "try_resolve_id does not treat underscore as a single-char wildcard" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Err("No task matches prefix: a_c")
+        assert_eq(try_resolve_id("a_c"), expected)
+    }
+}
+
+test "try_resolve_project_id resolves by exact name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'webapp')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("webapp"), expected)
+    }
+}
+
+test "try_resolve_project_id resolves by id prefix" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'webapp')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("p1a"), expected)
+    }
+}
+
+test "try_resolve_project_id returns Err on ambiguous id prefix" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'webapp')").unwrap()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1bbbb', 'api')").unwrap()
+        let expected: Result[Str, Str] = Err("Ambiguous project 'p1', multiple matches")
+        assert_eq(try_resolve_project_id("p1"), expected)
+    }
+}
+
+test "try_resolve_project_id resolves a name containing an underscore" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p2xxxx', 'my_app')").unwrap()
+        let expected: Result[Str, Str] = Ok("p2xxxx")
+        assert_eq(try_resolve_project_id("my_app"), expected)
     }
 }
