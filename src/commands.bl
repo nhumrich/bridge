@@ -112,10 +112,11 @@ pub fn resolve_id(prefix: Str) -> Str {
 }
 
 pub fn try_resolve_project_id(ref: Str) -> Result[Str, Str] {
-    // Only the LIKE arm is escaped; `name = {ref}` is exact equality, and escaping
-    // it would break projects whose names legitimately contain % or _.
+    // Only the LIKE arm is escaped; `name = {ref} COLLATE NOCASE` is exact equality
+    // modulo case, and escaping it would break projects whose names legitimately
+    // contain % or _.
     let pattern = "{escape_like_pattern(ref.to_lower())}%"
-    let rows = db.query("SELECT id FROM projects WHERE name = {ref} OR id LIKE {pattern} ESCAPE '!'").unwrap()
+    let rows = db.query("SELECT id FROM projects WHERE name = {ref} COLLATE NOCASE OR id LIKE {pattern} ESCAPE '!'").unwrap()
     if rows.is_empty() {
         return Err("No project matches: {ref}")
     }
@@ -505,10 +506,18 @@ pub fn cmd_rm(id_prefix: Str) {
 
 // --- Project Commands ---
 
-pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) {
-    let existing = db.query("SELECT id FROM projects WHERE name = {name}").unwrap()
+pub fn try_project_name_available(name: Str) -> Result[Str, Str] {
+    let existing = db.query("SELECT id FROM projects WHERE name = {name} COLLATE NOCASE").unwrap()
     if !existing.is_empty() {
-        io.eprintln("Project name already taken: {name}")
+        return Err("Project name already taken: {name}")
+    }
+    Ok(name)
+}
+
+pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) {
+    let available = try_project_name_available(name)
+    if available.is_err() {
+        io.eprintln(available.unwrap_err())
         exit(1)
     }
     let id = generate_id()

@@ -1,0 +1,80 @@
+import std.db
+import db.{init_db}
+import commands.{try_resolve_project_id, try_project_name_available}
+
+fn setup_test_db() {
+    init_db()
+}
+
+test "try_resolve_project_id resolves exact-case name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("Foo"), expected)
+    }
+}
+
+test "try_resolve_project_id resolves uppercase name against mixed-case stored name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("FOO"), expected)
+    }
+}
+
+test "try_resolve_project_id resolves lowercase name against mixed-case stored name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("foo"), expected)
+    }
+}
+
+test "try_resolve_project_id resolves mixed-case name against mixed-case stored name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("FoO"), expected)
+    }
+}
+
+test "try_resolve_project_id still resolves by id prefix" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("p1a"), expected)
+    }
+}
+
+test "try_resolve_project_id raises ambiguity error for case-variant name collisions" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p2bbbb', 'FOO')").unwrap()
+        let expected: Result[Str, Str] = Err("Ambiguous project 'foo', multiple matches")
+        assert_eq(try_resolve_project_id("foo"), expected)
+    }
+}
+
+test "try_project_name_available rejects a differently-cased duplicate" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        let expected: Result[Str, Str] = Err("Project name already taken: foo")
+        assert_eq(try_project_name_available("foo"), expected)
+    }
+}
+
+test "try_project_name_available accepts a genuinely new name" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
+        let expected: Result[Str, Str] = Ok("Bar")
+        assert_eq(try_project_name_available("Bar"), expected)
+    }
+}
