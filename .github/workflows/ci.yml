@@ -5,13 +5,31 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  # Keep in sync with blink-version in blink.toml.
+  BLINK_VERSION: v0.53.1
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/blinklang/blink:0.53.1
     steps:
       - uses: actions/checkout@v4
+
+      # Installed from the release tarball rather than ghcr.io/blinklang/blink,
+      # because that image ships libblink_std.a without its .archive-id stamp and
+      # every `blink build` there fails with IncompatibleStdlibArchive.
+      - name: Install Blink
+        run: |
+          curl -fsSL -o /tmp/blink.tar.gz \
+            "https://github.com/blinklang/blink/releases/download/${BLINK_VERSION}/blink-linux-x86_64.tar.gz"
+          tar xzf /tmp/blink.tar.gz -C /tmp
+          sudo cp /tmp/blink-linux-x86_64/bin/blink /usr/local/bin/
+          sudo mkdir -p /usr/local/share/blink
+          sudo cp -r /tmp/blink-linux-x86_64/share/blink/. /usr/local/share/blink/
+          blink --version
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev
 
       - name: Check
         run: blink check src/main.bl
