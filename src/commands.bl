@@ -229,10 +229,11 @@ fn print_task_rows(task_rows: List[TaskRow], show_project: Bool) {
     }
 }
 
-// Post-process a GROUP_CONCAT CSV column into a JSON array of strings. Done
-// in Blink rather than in SQL so the same query still serves text mode's
-// comma-joined display. Handles both ", " (tags) and "," (blockers) separators
-// since split(",") + trim() collapses either into the same clean tokens.
+// Post-process a GROUP_CONCAT CSV column into a JSON array of strings. Only
+// safe for blocker ids (generate_id() Crockford32, which cannot contain a
+// comma) — tag values are user-supplied and may themselves contain a comma,
+// which this would wrongly split into extra elements, so tag paths query the
+// real List[Str] instead (tags_list_for_task / project_tags_list).
 fn csv_to_json_array(csv: Str) -> Int {
     let arr = json_new_array()
     if csv.is_empty() {
@@ -263,7 +264,7 @@ fn task_json_base(t: TaskRow) -> Int {
     json_set(obj, "title", json_new_str(t.title))
     json_set(obj, "priority", json_new_int(t.priority))
     json_set(obj, "status", json_new_str(t.status))
-    json_set(obj, "tags", csv_to_json_array(t.tags))
+    json_set(obj, "tags", str_list_to_json_array(tags_list_for_task(t.id)))
     obj
 }
 
@@ -665,7 +666,7 @@ pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) {
             json_set(obj, "status", json_new_str(row.get_at(2) ?? ""))
             json_set(obj, "done", json_new_int((row.get_at(3) ?? "0").to_int()))
             json_set(obj, "total", json_new_int((row.get_at(4) ?? "0").to_int()))
-            json_set(obj, "tags", csv_to_json_array(row.get_at(5) ?? ""))
+            json_set(obj, "tags", str_list_to_json_array(project_tags_list(row.get_at(0) ?? "")))
             json_push(arr, obj)
         }
         io.println(json_encode(arr))

@@ -204,6 +204,133 @@ test "cmd_project_show json includes done total and task is_blocked" {
     }
 }
 
+// Regression tests for h6n242: a tag containing a comma must round-trip as a
+// single array element everywhere, not get split like the GROUP_CONCAT-based
+// paths used to (they split on "," which also matches inside a literal tag).
+fn seed_task_with_comma_tag(id: Str) {
+    db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ({id}, 'T', 'open', 2)").unwrap()
+    db.exec("INSERT INTO tags (task_id, tag) VALUES ({id}, 'a,b')").unwrap()
+}
+
+test "cmd_ls json keeps a comma-bearing tag as one element" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        seed_task_with_comma_tag("TASK0001")
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ls("", [], "", true, false, false)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        assert_eq(json_len(root), 1)
+        let tags_node = json_get(json_at(root, 0), "tags")
+        assert_eq(json_type(tags_node), JSON_ARRAY)
+        assert_eq(json_len(tags_node), 1)
+        assert_eq(json_as_str(json_at(tags_node, 0)), "a,b")
+    }
+}
+
+test "cmd_ready json keeps a comma-bearing tag as one element" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        seed_task_with_comma_tag("TASK0001")
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ready([], "", true)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        assert_eq(json_len(root), 1)
+        let tags_node = json_get(json_at(root, 0), "tags")
+        assert_eq(json_type(tags_node), JSON_ARRAY)
+        assert_eq(json_len(tags_node), 1)
+        assert_eq(json_as_str(json_at(tags_node, 0)), "a,b")
+    }
+}
+
+test "cmd_blocked json keeps a comma-bearing tag as one element" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('BLOCKER1', 'Blocker', 'open', 2)").unwrap()
+        seed_task_with_comma_tag("BLOCKED1")
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('BLOCKER1', 'BLOCKED1')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_blocked([], "", true)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        assert_eq(json_len(root), 1)
+        let tags_node = json_get(json_at(root, 0), "tags")
+        assert_eq(json_type(tags_node), JSON_ARRAY)
+        assert_eq(json_len(tags_node), 1)
+        assert_eq(json_as_str(json_at(tags_node, 0)), "a,b")
+    }
+}
+
+test "cmd_show json keeps a comma-bearing tag as one element" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        seed_task_with_comma_tag("TASK0001")
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_show("TASK0001", true)
+        }
+        json_clear()
+        let obj = json_parse(output.get(0) ?? "\{\}")
+        let tags_node = json_get(obj, "tags")
+        assert_eq(json_type(tags_node), JSON_ARRAY)
+        assert_eq(json_len(tags_node), 1)
+        assert_eq(json_as_str(json_at(tags_node, 0)), "a,b")
+    }
+}
+
+test "cmd_project_ls json keeps a comma-bearing project tag as one element" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'x,y')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_ls(true, [])
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        assert_eq(json_len(root), 1)
+        let tags_node = json_get(json_at(root, 0), "tags")
+        assert_eq(json_type(tags_node), JSON_ARRAY)
+        assert_eq(json_len(tags_node), 1)
+        assert_eq(json_as_str(json_at(tags_node, 0)), "x,y")
+    }
+}
+
+test "cmd_project_show json keeps comma-bearing tags as one element in project and nested tasks" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('PROJ0001', 'launch')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('PROJ0001', 'x,y')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('TASK0001', 'T', 'open', 2, 'PROJ0001')").unwrap()
+        db.exec("INSERT INTO tags (task_id, tag) VALUES ('TASK0001', 'a,b')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_show("launch", true)
+        }
+        json_clear()
+        let obj = json_parse(output.get(0) ?? "\{\}")
+        let project_tags_node = json_get(obj, "tags")
+        assert_eq(json_type(project_tags_node), JSON_ARRAY)
+        assert_eq(json_len(project_tags_node), 1)
+        assert_eq(json_as_str(json_at(project_tags_node, 0)), "x,y")
+
+        let tasks_node = json_get(obj, "tasks")
+        assert_eq(json_len(tasks_node), 1)
+        let task_tags_node = json_get(json_at(tasks_node, 0), "tags")
+        assert_eq(json_type(task_tags_node), JSON_ARRAY)
+        assert_eq(json_len(task_tags_node), 1)
+        assert_eq(json_as_str(json_at(task_tags_node, 0)), "a,b")
+    }
+}
+
 // Regression test for 564jmt: br edit --desc with a payload larger than
 // SQLite's inlined-literal comfort zone (~4000 bytes) used to panic at the
 // unwrap() because db.exec failed on the oversized interpolated statement.
