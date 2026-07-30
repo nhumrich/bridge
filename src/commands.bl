@@ -163,10 +163,6 @@ fn tags_list_for_task(task_id: Str) -> List[Str] {
     tags
 }
 
-fn tags_for_task(task_id: Str) -> Str {
-    tags_list_for_task(task_id).join(", ")
-}
-
 fn project_tags_list(project_id: Str) -> List[Str] {
     let rows = db.query("SELECT tag FROM project_tags WHERE project_id = {project_id} ORDER BY tag ASC").unwrap()
     let mut tags: List[Str] = []
