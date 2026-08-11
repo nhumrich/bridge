@@ -1,4 +1,4 @@
-const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
+pub const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
 
 fn hex_to_int(hex: Str) -> Int {
     let mut value = 0
@@ -31,26 +31,23 @@ fn base32_char(value: Int) -> Str {
     CROCKFORD.slice(value, value + 1)
 }
 
-pub fn generate_id() -> Str {
-    let result = process_run("sh", ["-c", "head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n'"])
-    if result.exit_code != 0 {
-        // Fallback
-        let seed = time_ms() * 1000 + getpid()
-        let mut out: List[Str] = []
-        let mut rem = seed
-        let mut i = 0
-        while i < 6 {
-            out.push(base32_char(rem % 32))
-            rem = rem / 32
-            i = i + 1
-        }
-        return out.join("")
-    }
-    let hex = result.out.trim()
-    // 5 bytes = 10 hex chars = 40 bits = 8 base32 chars
-    let value = hex_to_int(hex)
+// Takes 12 hex chars (6 random bytes). One byte -> one char: byte % 32 is
+// unbiased because 256 % 32 == 0 — do not fold multiple bytes into one int,
+// that's what caused the truncation bug this replaced.
+pub fn id_from_hex(hex: Str) -> Str {
     let mut out: List[Str] = []
-    let mut rem = value
+    let mut i = 0
+    while i < hex.len() {
+        let byte = hex_to_int(hex.slice(i, i + 2))
+        out.push(base32_char(byte % 32))
+        i = i + 2
+    }
+    out.join("")
+}
+
+pub fn id_from_seed(seed: Int) -> Str {
+    let mut out: List[Str] = []
+    let mut rem = seed
     let mut i = 0
     while i < 6 {
         out.push(base32_char(rem % 32))
@@ -58,4 +55,27 @@ pub fn generate_id() -> Str {
         i = i + 1
     }
     out.join("")
+}
+
+pub fn generate_id() -> Str {
+    let result = process_run("sh", ["-c", "head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n'"])
+    if result.exit_code != 0 {
+        return id_from_seed(time_ms() * 1000 + getpid())
+    }
+    id_from_hex(result.out.trim())
+}
+
+pub fn is_valid_id(s: Str) -> Bool {
+    if s.len() != 6 {
+        return false
+    }
+    let mut i = 0
+    while i < s.len() {
+        let c = s.slice(i, i + 1)
+        if !CROCKFORD.contains(c) {
+            return false
+        }
+        i = i + 1
+    }
+    true
 }

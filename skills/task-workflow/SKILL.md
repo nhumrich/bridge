@@ -39,7 +39,7 @@ br stats                                               # Task counts by status
 
 ## Conventions
 
-- **IDs**: ULIDs — use first 8+ chars as prefix (enough for uniqueness)
+- **IDs**: 6-char Crockford base32 random ids — match on any unique prefix.
 - **Priorities**: P0 (critical) → P4 (lowest). Default P2.
 - **Tags**: `namespace:value` convention. Auto-tags `repo:<name>` on add.
 - **Statuses**: open → in_progress → done/cancelled

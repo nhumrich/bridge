@@ -1,5 +1,5 @@
 import std.db
-import ulid.{generate_id}
+import taskid.{generate_id}
 import display.{short_id, format_priority, format_task_line, format_task_detail, format_activity_line, format_note_line, format_project_line}
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_new_int, json_new_bool, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
 import std.path.{path_join}
@@ -338,11 +338,49 @@ fn check_title_len(title: Str) {
     }
 }
 
+pub fn is_task_id_taken(id: Str) -> Bool {
+    !db.query("SELECT id FROM tasks WHERE id = {id}").unwrap().is_empty()
+}
+
+pub fn is_project_id_taken(id: Str) -> Bool {
+    !db.query("SELECT id FROM projects WHERE id = {id}").unwrap().is_empty()
+}
+
+// The id space is ~2^30, so collisions are rare but not impossible at scale —
+// retry a handful of times before giving up rather than trusting one draw.
+pub fn generate_unique_task_id() -> Str {
+    let mut i = 0
+    while i < 10 {
+        let id = generate_id()
+        if !is_task_id_taken(id) {
+            return id
+        }
+        i = i + 1
+    }
+    io.eprintln("Could not generate a unique task id after 10 attempts")
+    exit(1)
+    ""
+}
+
+pub fn generate_unique_project_id() -> Str {
+    let mut i = 0
+    while i < 10 {
+        let id = generate_id()
+        if !is_project_id_taken(id) {
+            return id
+        }
+        i = i + 1
+    }
+    io.eprintln("Could not generate a unique project id after 10 attempts")
+    exit(1)
+    ""
+}
+
 // --- CRUD Commands ---
 
 pub fn cmd_add(title: Str, description: Str, priority: Int, priority_explicit: Bool, tag_list: List[Str], project_ref: Str, session_id: Str) {
     check_title_len(title)
-    let id = generate_id()
+    let id = generate_unique_task_id()
     if project_ref.is_empty() {
         db.exec("INSERT INTO tasks (id, title, description, priority) VALUES ({id}, {title}, {description}, {priority})").unwrap()
     } else {
@@ -639,7 +677,7 @@ pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) {
         io.eprintln(available.unwrap_err())
         exit(1)
     }
-    let id = generate_id()
+    let id = generate_unique_project_id()
     db.exec("INSERT INTO projects (id, name, description) VALUES ({id}, {name}, {description})").unwrap()
 
     for tag in tag_list {
