@@ -57,10 +57,14 @@ pub fn id_from_seed(seed: Int) -> Str {
     out.join("")
 }
 
-pub fn generate_id() -> Str {
+// nonce only feeds the process_run-failure fallback: getpid() is constant and
+// time_ms() may not advance across a tight no-sleep retry loop, so without it
+// every fallback attempt in generate_unique_task_id/generate_unique_project_id
+// would compute the identical seed and defeat the retry entirely.
+pub fn generate_id(nonce: Int) -> Str {
     let result = process_run("sh", ["-c", "head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n'"])
     if result.exit_code != 0 {
-        return id_from_seed(time_ms() * 1000 + getpid())
+        return id_from_seed(time_ms() * 1000 + getpid() + nonce)
     }
     id_from_hex(result.out.trim())
 }

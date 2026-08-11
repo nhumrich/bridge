@@ -29,6 +29,9 @@ fn parse_priority(s: Str) -> Int {
     n
 }
 
+// New commands or new command_add_positional calls need a matching entry in
+// argcheck.positional_bounds (src/argcheck.bl) or they silently skip strict
+// arg-count validation -- the two tables aren't linked.
 fn build_parser() -> ArgParser {
     let mut p = argparser_new("br", "Bridge Task Manager")
     p = set_version(p, "0.12.0")

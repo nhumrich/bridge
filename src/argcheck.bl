@@ -11,6 +11,11 @@
 // max == -1 means unbounded (batch-capable commands accept any count >= min).
 // Unrecognized commands get (0, -1): fully permissive, so an unlisted future
 // command doesn't mysteriously start rejecting args.
+//
+// This table has no automatic link to build_parser() in main.bl -- adding a
+// command or a command_add_positional call there without a matching edit
+// here silently falls through to the permissive default with no test or
+// build failure. Update both when either changes.
 pub fn positional_bounds(cmd: Str) -> (Int, Int) {
     if cmd == "start" || cmd == "stop" || cmd == "done" || cmd == "close" || cmd == "cancel" || cmd == "reopen" || cmd == "rm" {
         (1, -1)
@@ -42,6 +47,16 @@ pub fn try_validate_positional_count(cmd: Str, actual: Int) -> Result[Str, Str] 
         return Ok("")
     }
 
+    // tag-like commands share the (2, -1) bucket with pure id-batch commands
+    // below but mean something different -- 1 id + at least one tag, not "2
+    // ids" -- so they need their own wording ahead of the generic branch.
+    if cmd == "tag" || cmd == "untag" || cmd == "project tag" || cmd == "project untag" {
+        if actual < min {
+            return Err("br {cmd}: expected an id and at least one tag, got {actual}")
+        }
+        return Ok("")
+    }
+
     if max == -1 {
         if actual < min {
             let noun = if min == 1 { "id" } else { "ids" }
@@ -56,6 +71,9 @@ pub fn try_validate_positional_count(cmd: Str, actual: Int) -> Result[Str, Str] 
             let msg = "br {cmd}: expected {min} {noun}, got {actual}"
             if cmd == "add" {
                 return Err("{msg} (hint: quote the title)")
+            }
+            if cmd == "project add" {
+                return Err("{msg} (hint: quote the name)")
             }
             return Err(msg)
         }

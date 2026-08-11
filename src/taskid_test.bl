@@ -42,7 +42,7 @@ test "id_from_seed returns 6 valid crockford chars" {
 }
 
 test "is_valid_id accepts a real generated id" {
-    let id = generate_id()
+    let id = generate_id(0)
     assert(is_valid_id(id))
 }
 

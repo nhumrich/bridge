@@ -1,5 +1,5 @@
 import std.db
-import taskid.{generate_id}
+import taskid.{generate_id, is_valid_id}
 import display.{short_id, format_priority, format_task_line, format_task_detail, format_activity_line, format_note_line, format_project_line}
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_new_int, json_new_bool, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
 import std.path.{path_join}
@@ -91,6 +91,9 @@ pub fn build_project_tag_clauses(tag_filters: List[Str]) -> List[Str] {
 // The exit-free core of resolve_id, so the no-match and ambiguous paths are
 // reachable from tests: exit(1) would kill the whole test binary.
 pub fn try_resolve_id(prefix: Str) -> Result[Str, Str] {
+    if prefix == "" {
+        return Err("No task matches prefix: {prefix}")
+    }
     let pattern = "{escape_like_pattern(prefix.to_lower())}%"
     let rows = db.query("SELECT id FROM tasks WHERE id LIKE {pattern} ESCAPE '!'").unwrap()
     if rows.is_empty() {
@@ -351,8 +354,8 @@ pub fn is_project_id_taken(id: Str) -> Bool {
 pub fn generate_unique_task_id() -> Str {
     let mut i = 0
     while i < 10 {
-        let id = generate_id()
-        if !is_task_id_taken(id) {
+        let id = generate_id(i)
+        if is_valid_id(id) && !is_task_id_taken(id) {
             return id
         }
         i = i + 1
@@ -365,8 +368,8 @@ pub fn generate_unique_task_id() -> Str {
 pub fn generate_unique_project_id() -> Str {
     let mut i = 0
     while i < 10 {
-        let id = generate_id()
-        if !is_project_id_taken(id) {
+        let id = generate_id(i)
+        if is_valid_id(id) && !is_project_id_taken(id) {
             return id
         }
         i = i + 1
@@ -619,40 +622,31 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
     edit_task(id, title, description, priority, status, project_ref, clear_project, append)
 }
 
+// Single-id convenience wrappers, kept for API/test compatibility
+// (commands_test.bl calls cmd_start/cmd_done directly) — thin delegations to
+// the batch drivers below rather than independent copies of their logic.
 pub fn cmd_start(id_prefix: Str, session_id: Str) {
-    let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "in_progress", "", false, false)
-    log_activity(id, "started", session_id)
+    cmd_transition_batch([id_prefix], "in_progress", "started", session_id)
 }
 
 pub fn cmd_stop(id_prefix: Str, session_id: Str) {
-    let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "open", "", false, false)
-    log_activity(id, "stopped", session_id)
+    cmd_transition_batch([id_prefix], "open", "stopped", session_id)
 }
 
 pub fn cmd_done(id_prefix: Str, session_id: Str) {
-    let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "done", "", false, false)
-    log_activity(id, "closed", session_id)
+    cmd_transition_batch([id_prefix], "done", "closed", session_id)
 }
 
 pub fn cmd_cancel(id_prefix: Str, session_id: Str) {
-    let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "cancelled", "", false, false)
-    log_activity(id, "cancelled", session_id)
+    cmd_transition_batch([id_prefix], "cancelled", "cancelled", session_id)
 }
 
 pub fn cmd_reopen(id_prefix: Str, session_id: Str) {
-    let id = resolve_id(id_prefix)
-    edit_task(id, "", "", -1, "open", "", false, false)
-    log_activity(id, "reopened", session_id)
+    cmd_transition_batch([id_prefix], "open", "reopened", session_id)
 }
 
 pub fn cmd_rm(id_prefix: Str) {
-    let id = resolve_id(id_prefix)
-    db.exec("DELETE FROM tasks WHERE id = {id}").unwrap()
-    io.println("Deleted: {short_id(id)}")
+    cmd_rm_batch([id_prefix])
 }
 
 // --- Batch variants ---
@@ -688,13 +682,26 @@ pub fn cmd_transition_batch(id_prefixes: List[Str], status: Str, action: Str, se
 
 pub fn cmd_rm_batch(id_prefixes: List[Str]) {
     let mut failures = 0
+    // Resolve every prefix against the DB before deleting anything. Two
+    // different prefixes (or the same one twice) can resolve to the same
+    // row -- resolving up front, before any delete happens, means a later
+    // duplicate is caught by the dedupe below instead of failing with
+    // "No task matches prefix" against a row the batch itself already
+    // removed.
+    let mut ids: List[Str] = []
     for prefix in id_prefixes {
         let resolved = try_resolve_id(prefix)
         if resolved.is_err() {
             io.eprintln(resolved.unwrap_err())
             failures = failures + 1
         } else {
-            let id = resolved.unwrap()
+            ids.push(resolved.unwrap())
+        }
+    }
+    let mut seen: Set[Str] = Set()
+    for id in ids {
+        if !seen.contains(id) {
+            seen.insert(id)
             db.exec("DELETE FROM tasks WHERE id = {id}").unwrap()
             io.println("Deleted: {short_id(id)}")
         }
@@ -1350,7 +1357,7 @@ pub fn vi_tmp_path(sid: Str) -> Str {
     // write_file (Void return, no error signal) fails silently and cmd_vi dies with a
     // misleading "title cannot be empty".
     let tmpdir = if configured.is_empty() { "/tmp" } else { configured }
-    "{tmpdir}/br-edit-{sid}-{generate_id()}.txt"
+    "{tmpdir}/br-edit-{sid}-{generate_id(0)}.txt"
 }
 
 // Single-quote for POSIX shells: close the quote, escape the literal ', reopen it.

@@ -121,6 +121,44 @@ test "add accepts one arg" {
     assert(result.is_ok())
 }
 
+test "project add rejects extra args with a quoting hint" {
+    let result = try_validate_positional_count("project add", 2)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br project add: expected 1 argument, got 2 (hint: quote the name)")
+}
+
+// --- tag-like commands (tag, untag, project tag, project untag) ---
+// Share the (2, -1) bucket with pure id-batch commands but mean "1 id + at
+// least one tag", not "2 ids" -- these get their own wording.
+
+test "tag below min rejects a single arg" {
+    let result = try_validate_positional_count("tag", 1)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br tag: expected an id and at least one tag, got 1")
+}
+
+test "tag accepts an id and one tag" {
+    let result = try_validate_positional_count("tag", 2)
+    assert(result.is_ok())
+}
+
+test "untag below min rejects a single arg" {
+    let result = try_validate_positional_count("untag", 1)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br untag: expected an id and at least one tag, got 1")
+}
+
+test "project tag below min rejects a single arg" {
+    let result = try_validate_positional_count("project tag", 1)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br project tag: expected an id and at least one tag, got 1")
+}
+
+test "project untag accepts a ref and many tags" {
+    let result = try_validate_positional_count("project untag", 4)
+    assert(result.is_ok())
+}
+
 // --- Zero-positional commands (ls, list, ready, stats, ...) ---
 
 test "zero-positional command rejects one extra arg" {
