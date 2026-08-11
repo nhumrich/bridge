@@ -1,0 +1,59 @@
+import taskid.{id_from_hex, id_from_seed, generate_id, is_valid_id, CROCKFORD}
+
+test "id_from_hex returns 6 chars" {
+    let id = id_from_hex("00112233445f")
+    assert_eq(id.len(), 6)
+}
+
+test "id_from_hex is deterministic" {
+    let a = id_from_hex("00112233445f")
+    let b = id_from_hex("00112233445f")
+    assert_eq(a, b)
+}
+
+test "id_from_hex output has no visually ambiguous chars" {
+    let id = id_from_hex("00112233445f")
+    assert(!id.contains("i"))
+    assert(!id.contains("l"))
+    assert(!id.contains("o"))
+    assert(!id.contains("u"))
+}
+
+test "id_from_hex distinct inputs produce distinct ids" {
+    let a = id_from_hex("00112233445f")
+    let b = id_from_hex("ffeeddccbbaa")
+    assert(a != b)
+}
+
+test "id_from_hex all-zero bytes maps to all-zero chars" {
+    let id = id_from_hex("000000000000")
+    assert_eq(id, "000000")
+}
+
+test "id_from_seed returns 6 valid crockford chars" {
+    let id = id_from_seed(123456789)
+    assert_eq(id.len(), 6)
+    let mut i = 0
+    while i < id.len() {
+        let c = id.slice(i, i + 1)
+        assert(CROCKFORD.contains(c))
+        i = i + 1
+    }
+}
+
+test "is_valid_id accepts a real generated id" {
+    let id = generate_id()
+    assert(is_valid_id(id))
+}
+
+test "is_valid_id rejects empty string" {
+    assert(!is_valid_id(""))
+}
+
+test "is_valid_id rejects 5-char string" {
+    assert(!is_valid_id("abcde"))
+}
+
+test "is_valid_id rejects a string containing u" {
+    assert(!is_valid_id("abcduf"))
+}

@@ -1,6 +1,7 @@
 import std.db
 import db.{init_db}
-import commands.{sql_escape, escape_like_pattern, try_resolve_id, try_resolve_project_id, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status, has_cycle}
+import commands.{sql_escape, escape_like_pattern, try_resolve_id, try_resolve_project_id, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status, has_cycle, is_task_id_taken, generate_unique_task_id}
+import taskid.{is_valid_id}
 import std.testing.{capture_print}
 
 fn setup_test_db() {
@@ -812,5 +813,23 @@ test "try_resolve_project_id resolves a name containing an underscore" {
         db.exec("INSERT INTO projects (id, name) VALUES ('p2xxxx', 'my_app')").unwrap()
         let expected: Result[Str, Str] = Ok("p2xxxx")
         assert_eq(try_resolve_project_id("my_app"), expected)
+    }
+}
+
+test "is_task_id_taken is true for an existing id and false otherwise" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, priority) VALUES ('abc123', 'existing', 2)").unwrap()
+        assert(is_task_id_taken("abc123"))
+        assert(!is_task_id_taken("zzzzzz"))
+    }
+}
+
+test "generate_unique_task_id returns a valid, unused id" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        let id = generate_unique_task_id()
+        assert(is_valid_id(id))
+        assert(!is_task_id_taken(id))
     }
 }
