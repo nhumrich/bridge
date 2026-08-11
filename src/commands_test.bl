@@ -1,6 +1,6 @@
 import std.db
 import db.{init_db}
-import commands.{sql_escape, escape_like_pattern, try_resolve_id, try_resolve_project_id, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status, has_cycle, is_task_id_taken, generate_unique_task_id}
+import commands.{sql_escape, escape_like_pattern, try_resolve_id, try_resolve_project_id, build_tag_clauses, build_project_tag_clauses, build_project_clause, resolve_project_id, list_contains, cmd_ready, cmd_ls, cmd_add, cmd_edit, cmd_done, cmd_start, cmd_dep_add, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_tag, cmd_project_untag, cmd_project_rm, set_task_status, has_cycle, is_task_id_taken, generate_unique_task_id, run_transition_batch}
 import taskid.{is_valid_id}
 import std.testing.{capture_print}
 
@@ -230,6 +230,65 @@ test "cmd_start marks task in_progress" {
         }
         let rows = db.query("SELECT status FROM tasks WHERE id = 'TASK0001'").unwrap()
         assert_eq(rows.get(0).unwrap().get_at(0) ?? "", "in_progress")
+    }
+}
+
+test "run_transition_batch closes all good ids and reports zero failures" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('taska001', 'A', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('taskb001', 'B', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('taskc001', 'C', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        let mut failures = 0
+        with capture_print(output) {
+            failures = run_transition_batch(["taska001", "taskb001", "taskc001"], "done", "closed", "")
+        }
+        assert_eq(failures, 0)
+        let rows = db.query("SELECT status FROM tasks ORDER BY id ASC").unwrap()
+        assert_eq(rows.len(), 3)
+        for row in rows {
+            assert_eq(row.get_at(0) ?? "", "done")
+        }
+    }
+}
+
+test "run_transition_batch is best-effort around a bad id in the middle" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('taska001', 'A', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('taskc001', 'C', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        let mut failures = 0
+        with capture_print(output) {
+            failures = run_transition_batch(["taska001", "nosuchid", "taskc001"], "done", "closed", "")
+        }
+        assert_eq(failures, 1)
+        let a_row = db.query_one("SELECT status FROM tasks WHERE id = 'taska001'").unwrap().unwrap()
+        assert_eq(a_row.get_at(0) ?? "", "done")
+        let c_row = db.query_one("SELECT status FROM tasks WHERE id = 'taskc001'").unwrap().unwrap()
+        assert_eq(c_row.get_at(0) ?? "", "done")
+    }
+}
+
+test "run_transition_batch counts an ambiguous prefix as a failure" {
+    with db.connect(":memory:") {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('taska001', 'A', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('taska002', 'A2', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('taskc001', 'C', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        let mut failures = 0
+        with capture_print(output) {
+            failures = run_transition_batch(["taska", "taskc001"], "done", "closed", "")
+        }
+        assert_eq(failures, 1)
+        let c_row = db.query_one("SELECT status FROM tasks WHERE id = 'taskc001'").unwrap().unwrap()
+        assert_eq(c_row.get_at(0) ?? "", "done")
+        let a1_row = db.query_one("SELECT status FROM tasks WHERE id = 'taska001'").unwrap().unwrap()
+        assert_eq(a1_row.get_at(0) ?? "", "open")
+        let a2_row = db.query_one("SELECT status FROM tasks WHERE id = 'taska002'").unwrap().unwrap()
+        assert_eq(a2_row.get_at(0) ?? "", "open")
     }
 }
 

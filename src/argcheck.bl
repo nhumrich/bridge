@@ -1,0 +1,71 @@
+// Positional-argument-count validation, checked once in main.bl's run() before
+// dispatch. std.args's ArgParser never bounds how many unmatched positional
+// values pile up in positional_vals, so without this a command like
+// `br close a b c d` would silently read only args_positional(a, 0) and drop
+// b/c/d with no error. Pure and exit-free (like try_validate_ls_flags in
+// commands.bl) so both arms are reachable from tests without exit(1) killing
+// the test binary.
+
+// Returns (min, max) positional args allowed for `cmd` (the exact string
+// args_command(a) returns -- space-joined for subcommands, e.g. "dep add").
+// max == -1 means unbounded (batch-capable commands accept any count >= min).
+// Unrecognized commands get (0, -1): fully permissive, so an unlisted future
+// command doesn't mysteriously start rejecting args.
+pub fn positional_bounds(cmd: Str) -> (Int, Int) {
+    if cmd == "start" || cmd == "stop" || cmd == "done" || cmd == "close" || cmd == "cancel" || cmd == "reopen" || cmd == "rm" {
+        (1, -1)
+    } else if cmd == "tag" || cmd == "untag" || cmd == "project tag" || cmd == "project untag" {
+        (2, -1)
+    } else if cmd == "note" || cmd == "dep add" || cmd == "dep rm" {
+        (2, 2)
+    } else if cmd == "add" || cmd == "show" || cmd == "edit" || cmd == "vi" || cmd == "project add" || cmd == "project show" || cmd == "project edit" || cmd == "project rm" {
+        (1, 1)
+    } else if cmd == "graph" {
+        (0, 1)
+    } else if cmd == "ls" || cmd == "list" || cmd == "ready" || cmd == "blocked" || cmd == "stats" || cmd == "tags" || cmd == "project ls" || cmd == "install" || cmd == "uninstall" || cmd == "dep" || cmd == "project" {
+        (0, 0)
+    } else {
+        (0, -1)
+    }
+}
+
+pub fn try_validate_positional_count(cmd: Str, actual: Int) -> Result[Str, Str] {
+    let (min, max) = positional_bounds(cmd)
+
+    // Zero-positional commands get their own wording, checked ahead of the
+    // min==max branch below (which would otherwise also match 0==0 but with
+    // the wrong phrasing).
+    if min == 0 && max == 0 {
+        if actual > 0 {
+            return Err("br {cmd}: takes no positional arguments, got {actual}")
+        }
+        return Ok("")
+    }
+
+    if max == -1 {
+        if actual < min {
+            let noun = if min == 1 { "id" } else { "ids" }
+            return Err("br {cmd}: expected at least {min} {noun}, got {actual}")
+        }
+        return Ok("")
+    }
+
+    if min == max {
+        if actual != min {
+            let noun = if min == 1 { "argument" } else { "arguments" }
+            let msg = "br {cmd}: expected {min} {noun}, got {actual}"
+            if cmd == "add" {
+                return Err("{msg} (hint: quote the title)")
+            }
+            return Err(msg)
+        }
+        return Ok("")
+    }
+
+    // Bounded range with min < max and max != -1 (currently only graph's 0..1).
+    if actual < min || actual > max {
+        let noun = if max == 1 { "argument" } else { "arguments" }
+        return Err("br {cmd}: expected at most {max} {noun}, got {actual}")
+    }
+    Ok("")
+}

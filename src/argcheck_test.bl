@@ -1,0 +1,165 @@
+import argcheck.{positional_bounds, try_validate_positional_count}
+
+test "positional_bounds batch command is 1 to unbounded" {
+    let (min, max) = positional_bounds("close")
+    assert_eq(min, 1)
+    assert_eq(max, -1)
+}
+
+test "positional_bounds exact-1 command" {
+    let (min, max) = positional_bounds("show")
+    assert_eq(min, 1)
+    assert_eq(max, 1)
+}
+
+test "positional_bounds exact-2 command" {
+    let (min, max) = positional_bounds("note")
+    assert_eq(min, 2)
+    assert_eq(max, 2)
+}
+
+test "positional_bounds zero-positional command" {
+    let (min, max) = positional_bounds("ls")
+    assert_eq(min, 0)
+    assert_eq(max, 0)
+}
+
+test "positional_bounds graph is 0 to 1" {
+    let (min, max) = positional_bounds("graph")
+    assert_eq(min, 0)
+    assert_eq(max, 1)
+}
+
+test "positional_bounds unknown command is fully permissive" {
+    let (min, max) = positional_bounds("totally-made-up")
+    assert_eq(min, 0)
+    assert_eq(max, -1)
+}
+
+// --- Batch commands (start/stop/done/close/cancel/reopen/rm) ---
+
+test "batch command below min rejects zero args" {
+    let result = try_validate_positional_count("close", 0)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br close: expected at least 1 id, got 0")
+}
+
+test "batch command accepts a single id" {
+    let result = try_validate_positional_count("close", 1)
+    assert(result.is_ok())
+}
+
+test "batch command accepts many ids" {
+    let result = try_validate_positional_count("close", 5)
+    assert(result.is_ok())
+}
+
+test "start below min rejects zero args" {
+    let result = try_validate_positional_count("start", 0)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br start: expected at least 1 id, got 0")
+}
+
+// --- Exact-2 commands (note, dep add, dep rm) ---
+
+test "exact-2 command rejects one arg" {
+    let result = try_validate_positional_count("note", 1)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br note: expected 2 arguments, got 1")
+}
+
+test "exact-2 command rejects three args" {
+    let result = try_validate_positional_count("note", 3)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br note: expected 2 arguments, got 3")
+}
+
+test "exact-2 command accepts two args" {
+    let result = try_validate_positional_count("note", 2)
+    assert(result.is_ok())
+}
+
+// --- Exact-1 commands (show, add, edit, vi, ...) ---
+
+test "exact-1 command rejects zero args" {
+    let result = try_validate_positional_count("show", 0)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br show: expected 1 argument, got 0")
+}
+
+test "exact-1 command rejects two args" {
+    let result = try_validate_positional_count("show", 2)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br show: expected 1 argument, got 2")
+}
+
+test "exact-1 command matching the verbatim spec example" {
+    let result = try_validate_positional_count("show", 3)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br show: expected 1 argument, got 3")
+}
+
+test "exact-1 command accepts one arg" {
+    let result = try_validate_positional_count("show", 1)
+    assert(result.is_ok())
+}
+
+test "add rejects extra args with a quoting hint" {
+    let result = try_validate_positional_count("add", 2)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br add: expected 1 argument, got 2 (hint: quote the title)")
+}
+
+test "add rejects zero args with a quoting hint" {
+    let result = try_validate_positional_count("add", 0)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br add: expected 1 argument, got 0 (hint: quote the title)")
+}
+
+test "add accepts one arg" {
+    let result = try_validate_positional_count("add", 1)
+    assert(result.is_ok())
+}
+
+// --- Zero-positional commands (ls, list, ready, stats, ...) ---
+
+test "zero-positional command rejects one extra arg" {
+    let result = try_validate_positional_count("ls", 1)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br ls: takes no positional arguments, got 1")
+}
+
+test "zero-positional command accepts zero args" {
+    let result = try_validate_positional_count("ls", 0)
+    assert(result.is_ok())
+}
+
+// --- graph: 0..1 ---
+
+test "graph accepts zero args" {
+    let result = try_validate_positional_count("graph", 0)
+    assert(result.is_ok())
+}
+
+test "graph accepts one arg" {
+    let result = try_validate_positional_count("graph", 1)
+    assert(result.is_ok())
+}
+
+test "graph rejects two args" {
+    let result = try_validate_positional_count("graph", 2)
+    assert(result.is_err())
+    assert_eq(result.unwrap_err(), "br graph: expected at most 1 argument, got 2")
+}
+
+// --- Unknown commands stay fully permissive ---
+
+test "unknown command is permissive at a large count" {
+    let result = try_validate_positional_count("totally-made-up", 50)
+    assert(result.is_ok())
+}
+
+test "unknown command is permissive at zero" {
+    let result = try_validate_positional_count("totally-made-up", 0)
+    assert(result.is_ok())
+}

@@ -655,6 +655,55 @@ pub fn cmd_rm(id_prefix: Str) {
     io.println("Deleted: {short_id(id)}")
 }
 
+// --- Batch variants ---
+//
+// Best-effort: every id prefix is attempted regardless of earlier failures, so
+// a bad id in the middle of `br close a b c` doesn't stop b/c from being
+// processed. edit_task already commits per id (see its db.begin()/db.commit()
+// pair above) and prints "Updated: {short_id}" per call, so partial progress
+// persists correctly even when a later id fails to resolve.
+
+pub fn run_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) -> Int {
+    let mut failures = 0
+    for prefix in id_prefixes {
+        let resolved = try_resolve_id(prefix)
+        if resolved.is_err() {
+            io.eprintln(resolved.unwrap_err())
+            failures = failures + 1
+        } else {
+            let id = resolved.unwrap()
+            edit_task(id, "", "", -1, status, "", false, false)
+            log_activity(id, action, session_id)
+        }
+    }
+    failures
+}
+
+pub fn cmd_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) {
+    let failures = run_transition_batch(id_prefixes, status, action, session_id)
+    if failures > 0 {
+        exit(1)
+    }
+}
+
+pub fn cmd_rm_batch(id_prefixes: List[Str]) {
+    let mut failures = 0
+    for prefix in id_prefixes {
+        let resolved = try_resolve_id(prefix)
+        if resolved.is_err() {
+            io.eprintln(resolved.unwrap_err())
+            failures = failures + 1
+        } else {
+            let id = resolved.unwrap()
+            db.exec("DELETE FROM tasks WHERE id = {id}").unwrap()
+            io.println("Deleted: {short_id(id)}")
+        }
+    }
+    if failures > 0 {
+        exit(1)
+    }
+}
+
 // --- Project Commands ---
 
 // exclude_id lets a rename keep its own row out of the collision check, so
