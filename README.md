@@ -53,7 +53,7 @@ br add "my task" -p 0           # add task (priority 0 = highest)
 br add "fix bug" -t repo:bridge # add with tag
 br ready                        # show unblocked tasks
 br start <id>                   # start working
-br close <id>                   # complete task
+br close <id> [id...]           # complete task(s) (batch, best-effort)
 br dep add <blocker> <blocked>  # add dependency
 br blocked                      # show what's stuck
 br ls                           # list open tasks

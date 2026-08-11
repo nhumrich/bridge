@@ -1,7 +1,8 @@
 import std.args.{ArgParser, Args, argparser_new, set_version, add_flag, add_command, command_add_positional, command_add_option, command_add_flag, argparse, args_error, args_command, args_has, args_get, args_get_all, args_positional, args_positional_count, generate_help, generate_command_help}
 import std.db
 import db.{db_path, init_db}
-import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_vi, cmd_start, cmd_stop, cmd_done, cmd_cancel, cmd_reopen, cmd_rm, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_edit, cmd_project_rm, cmd_project_tag, cmd_project_untag}
+import argcheck.{try_validate_positional_count}
+import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_vi, cmd_transition_batch, cmd_rm_batch, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_edit, cmd_project_rm, cmd_project_tag, cmd_project_untag}
 
 fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     let mut result: List[Str] = []
@@ -78,31 +79,31 @@ fn build_parser() -> ArgParser {
     p = command_add_option(p, "edit", "--append", "", "Append to description")
 
     p = add_command(p, "start", "Start a task")
-    p = command_add_positional(p, "start", "id", "Task ID prefix")
+    p = command_add_positional(p, "start", "id", "Task ID prefix (repeatable)")
     p = command_add_option(p, "start", "--session", "", "Session ID")
 
     p = add_command(p, "done", "Complete a task")
-    p = command_add_positional(p, "done", "id", "Task ID prefix")
+    p = command_add_positional(p, "done", "id", "Task ID prefix (repeatable)")
     p = command_add_option(p, "done", "--session", "", "Session ID")
 
     p = add_command(p, "close", "Complete a task")
-    p = command_add_positional(p, "close", "id", "Task ID prefix")
+    p = command_add_positional(p, "close", "id", "Task ID prefix (repeatable)")
     p = command_add_option(p, "close", "--session", "", "Session ID")
 
     p = add_command(p, "stop", "Stop working on a task (back to open)")
-    p = command_add_positional(p, "stop", "id", "Task ID prefix")
+    p = command_add_positional(p, "stop", "id", "Task ID prefix (repeatable)")
     p = command_add_option(p, "stop", "--session", "", "Session ID")
 
     p = add_command(p, "cancel", "Cancel a task")
-    p = command_add_positional(p, "cancel", "id", "Task ID prefix")
+    p = command_add_positional(p, "cancel", "id", "Task ID prefix (repeatable)")
     p = command_add_option(p, "cancel", "--session", "", "Session ID")
 
     p = add_command(p, "reopen", "Reopen a closed task")
-    p = command_add_positional(p, "reopen", "id", "Task ID prefix")
+    p = command_add_positional(p, "reopen", "id", "Task ID prefix (repeatable)")
     p = command_add_option(p, "reopen", "--session", "", "Session ID")
 
     p = add_command(p, "rm", "Delete a task")
-    p = command_add_positional(p, "rm", "id", "Task ID prefix")
+    p = command_add_positional(p, "rm", "id", "Task ID prefix (repeatable)")
 
     p = add_command(p, "dep", "Manage dependencies")
     p = add_command(p, "dep.add", "Add dependency")
@@ -181,6 +182,12 @@ fn run() {
         exit(0)
     }
 
+    let count_check = try_validate_positional_count(cmd, args_positional_count(a))
+    if count_check.is_err() {
+        io.eprintln(count_check.unwrap_err())
+        exit(1)
+    }
+
     let session_id = args_get(a, "session")
 
     if cmd == "add" {
@@ -245,47 +252,47 @@ fn run() {
         let clear_project = args_has(a, "no-project")
         cmd_edit(id, title, description, priority, status, project_ref, clear_project, append)
     } else if cmd == "start" {
-        let id = args_positional(a, 0)
-        if id == "" {
-            io.eprintln("Usage: br start <id>")
+        let ids = args_positionals_from(a, 0)
+        if ids.is_empty() {
+            io.eprintln("Usage: br start <id> [id...]")
             exit(1)
         }
-        cmd_start(id, session_id)
+        cmd_transition_batch(ids, "in_progress", "started", session_id)
     } else if cmd == "stop" {
-        let id = args_positional(a, 0)
-        if id == "" {
-            io.eprintln("Usage: br stop <id>")
+        let ids = args_positionals_from(a, 0)
+        if ids.is_empty() {
+            io.eprintln("Usage: br stop <id> [id...]")
             exit(1)
         }
-        cmd_stop(id, session_id)
+        cmd_transition_batch(ids, "open", "stopped", session_id)
     } else if cmd == "done" || cmd == "close" {
-        let id = args_positional(a, 0)
-        if id == "" {
-            io.eprintln("Usage: br done <id>")
+        let ids = args_positionals_from(a, 0)
+        if ids.is_empty() {
+            io.eprintln("Usage: br done <id> [id...]")
             exit(1)
         }
-        cmd_done(id, session_id)
+        cmd_transition_batch(ids, "done", "closed", session_id)
     } else if cmd == "cancel" {
-        let id = args_positional(a, 0)
-        if id == "" {
-            io.eprintln("Usage: br cancel <id>")
+        let ids = args_positionals_from(a, 0)
+        if ids.is_empty() {
+            io.eprintln("Usage: br cancel <id> [id...]")
             exit(1)
         }
-        cmd_cancel(id, session_id)
+        cmd_transition_batch(ids, "cancelled", "cancelled", session_id)
     } else if cmd == "reopen" {
-        let id = args_positional(a, 0)
-        if id == "" {
-            io.eprintln("Usage: br reopen <id>")
+        let ids = args_positionals_from(a, 0)
+        if ids.is_empty() {
+            io.eprintln("Usage: br reopen <id> [id...]")
             exit(1)
         }
-        cmd_reopen(id, session_id)
+        cmd_transition_batch(ids, "open", "reopened", session_id)
     } else if cmd == "rm" {
-        let id = args_positional(a, 0)
-        if id == "" {
-            io.eprintln("Usage: br rm <id>")
+        let ids = args_positionals_from(a, 0)
+        if ids.is_empty() {
+            io.eprintln("Usage: br rm <id> [id...]")
             exit(1)
         }
-        cmd_rm(id)
+        cmd_rm_batch(ids)
     } else if cmd == "dep add" {
         let (blocker, blocked) = (args_positional(a, 0), args_positional(a, 1))
         if blocker == "" || blocked == "" {
