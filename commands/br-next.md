@@ -42,7 +42,7 @@ Create an implementation plan:
 
 - Run `br start <id>` for each selected task
 - If 1 task: begin implementation directly
-- If 2+ tasks: use the `dispatching-parallel-agents` skill to work them in parallel (each agent gets a worktree)
+- If 2+ tasks: launch one Agent per task in a single message, each with `isolation: "worktree"`
 - Tell the user which tasks you're picking up and why
 - execute the plan from above
 - As each task is completed:
