@@ -418,7 +418,9 @@ fn run() ! DB.Read, DB.Write {
 
 fn main() {
     let path = db_path()
-    match db.connect(path) {
+    // Bind first: 0.59.0 codegen ICEs (CodegenStageNotBuilt) on a qualified call as match scrutinee
+    let conn_result = db.connect(path)
+    match conn_result {
         Ok(conn) => {
             with conn {
                 run()
