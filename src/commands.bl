@@ -1,4 +1,5 @@
 import std.db
+import std.db_row
 import taskid.{generate_id, is_valid_id}
 import display.{short_id, format_priority, format_task_line, format_task_detail, format_activity_line, format_note_line, format_project_line}
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_new_int, json_new_bool, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
@@ -26,7 +27,7 @@ pub fn escape_like_pattern(s: Str) -> Str {
 
 // Set a task's status and keep closed_at in sync: stamp it on terminal states,
 // clear it on reopen. Shared by edit_task and cmd_vi so the two stay consistent.
-pub fn set_task_status(id: Str, status: Str) {
+pub fn set_task_status(id: Str, status: Str) ! DB.Write {
     db.exec("UPDATE tasks SET status = {status} WHERE id = {id}").unwrap()
     if status == "done" || status == "cancelled" {
         db.exec("UPDATE tasks SET closed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
@@ -46,27 +47,27 @@ pub fn is_blocked_sql() -> Str {
 // single, reviewable statement. The spliced values are escaped by sql_escape upstream.
 
 @trusted(audit: "BRIDGE-SQL-RAW")
-fn query_tasks_filtered(blocked_col: Str, where_clause: Str) -> List[Row] {
+fn query_tasks_filtered(blocked_col: Str, where_clause: Str) -> List[db_row.Row] ! DB.Read {
     db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, {Raw(blocked_col)} as is_blocked, COALESCE(p.name, '') as project FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id LEFT JOIN projects p ON p.id = t.project_id{Raw(where_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 }
 
 @trusted(audit: "BRIDGE-SQL-RAW")
-fn query_ready_filtered(tag_clause: Str) -> List[Row] {
+fn query_ready_filtered(tag_clause: Str) -> List[db_row.Row] ! DB.Read {
     db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(tg.tag, ', '), '') as tags, COALESCE(p.name, '') as project FROM tasks t LEFT JOIN tags tg ON tg.task_id = t.id LEFT JOIN projects p ON p.id = t.project_id WHERE t.status IN ('open', 'in_progress') AND NOT EXISTS (SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC, t.created_at ASC").unwrap()
 }
 
 @trusted(audit: "BRIDGE-SQL-RAW")
-fn query_blocked_filtered(tag_clause: Str) -> List[Row] {
+fn query_blocked_filtered(tag_clause: Str) -> List[db_row.Row] ! DB.Read {
     db.query("SELECT t.id, t.title, t.priority, t.status, COALESCE(GROUP_CONCAT(DISTINCT tg.tag), '') as tags, COALESCE(GROUP_CONCAT(DISTINCT d.blocker_id), '') as blockers, COALESCE(p.name, '') as project FROM tasks t JOIN deps d ON d.blocked_id = t.id LEFT JOIN tags tg ON tg.task_id = t.id LEFT JOIN projects p ON p.id = t.project_id WHERE t.status NOT IN ('done', 'cancelled') AND EXISTS (SELECT 1 FROM deps d2 JOIN tasks blocker ON blocker.id = d2.blocker_id WHERE d2.blocked_id = t.id AND blocker.status NOT IN ('done', 'cancelled')){Raw(tag_clause)} GROUP BY t.id ORDER BY t.priority ASC").unwrap()
 }
 
 @trusted(audit: "BRIDGE-SQL-RAW")
-fn query_stats_filtered(tag_join: Str, tag_where: Str) -> List[Row] {
+fn query_stats_filtered(tag_join: Str, tag_where: Str) -> List[db_row.Row] ! DB.Read {
     db.query("SELECT t.status, COUNT(*) as count FROM tasks t{Raw(tag_join)}{Raw(tag_where)} GROUP BY t.status ORDER BY t.status").unwrap()
 }
 
 @trusted(audit: "BRIDGE-SQL-RAW")
-fn query_projects_filtered(where_clause: Str) -> List[Row] {
+fn query_projects_filtered(where_clause: Str) -> List[db_row.Row] ! DB.Read {
     db.query("SELECT p.id, p.name, p.status, COALESCE(SUM(CASE WHEN t.status IN ('done', 'cancelled') THEN 1 ELSE 0 END), 0) as done, COUNT(t.id) as total, (SELECT COALESCE(GROUP_CONCAT(pt.tag, ', '), '') FROM project_tags pt WHERE pt.project_id = p.id) as tags FROM projects p LEFT JOIN tasks t ON t.project_id = p.id{Raw(where_clause)} GROUP BY p.id ORDER BY p.created_at ASC").unwrap()
 }
 
@@ -90,7 +91,7 @@ pub fn build_project_tag_clauses(tag_filters: List[Str]) -> List[Str] {
 
 // The exit-free core of resolve_id, so the no-match and ambiguous paths are
 // reachable from tests: exit(1) would kill the whole test binary.
-pub fn try_resolve_id(prefix: Str) -> Result[Str, Str] {
+pub fn try_resolve_id(prefix: Str) -> Result[Str, Str] ! DB.Read {
     if prefix == "" {
         return Err("No task matches prefix: {prefix}")
     }
@@ -105,16 +106,16 @@ pub fn try_resolve_id(prefix: Str) -> Result[Str, Str] {
     Ok(rows.get(0).unwrap().get_at(0) ?? "")
 }
 
-pub fn resolve_id(prefix: Str) -> Str {
+pub fn resolve_id(prefix: Str) -> Str ! DB.Read {
     let result = try_resolve_id(prefix)
     if result.is_err() {
         io.eprintln(result.unwrap_err())
-        exit(1)
+        env.exit(1)
     }
     result.unwrap()
 }
 
-pub fn try_resolve_project_id(ref: Str) -> Result[Str, Str] {
+pub fn try_resolve_project_id(ref: Str) -> Result[Str, Str] ! DB.Read {
     // Only the LIKE arm is escaped; `name = {ref} COLLATE NOCASE` is exact equality
     // modulo case, and escaping it would break projects whose names legitimately
     // contain % or _.
@@ -129,16 +130,16 @@ pub fn try_resolve_project_id(ref: Str) -> Result[Str, Str] {
     Ok(rows.get(0).unwrap().get_at(0) ?? "")
 }
 
-pub fn resolve_project_id(ref: Str) -> Str {
+pub fn resolve_project_id(ref: Str) -> Str ! DB.Read {
     let result = try_resolve_project_id(ref)
     if result.is_err() {
         io.eprintln(result.unwrap_err())
-        exit(1)
+        env.exit(1)
     }
     result.unwrap()
 }
 
-pub fn build_project_clause(project_ref: Str) -> Str {
+pub fn build_project_clause(project_ref: Str) -> Str ! DB.Read {
     if project_ref.is_empty() {
         return ""
     }
@@ -146,7 +147,7 @@ pub fn build_project_clause(project_ref: Str) -> Str {
     "t.project_id = '{sql_escape(pid)}'"
 }
 
-fn project_name_for_task(task_id: Str) -> Str {
+fn project_name_for_task(task_id: Str) -> Str ! DB.Read {
     let row = db.query_one("SELECT p.name FROM projects p JOIN tasks t ON t.project_id = p.id WHERE t.id = {task_id}").unwrap()
     match row {
         Some(r) => r.get_at(0) ?? ""
@@ -154,7 +155,7 @@ fn project_name_for_task(task_id: Str) -> Str {
     }
 }
 
-fn tags_list_for_task(task_id: Str) -> List[Str] {
+fn tags_list_for_task(task_id: Str) -> List[Str] ! DB.Read {
     let rows = db.query("SELECT tag FROM tags WHERE task_id = {task_id} ORDER BY tag ASC").unwrap()
     let mut tags: List[Str] = []
     for row in rows {
@@ -166,7 +167,7 @@ fn tags_list_for_task(task_id: Str) -> List[Str] {
     tags
 }
 
-fn project_tags_list(project_id: Str) -> List[Str] {
+fn project_tags_list(project_id: Str) -> List[Str] ! DB.Read {
     let rows = db.query("SELECT tag FROM project_tags WHERE project_id = {project_id} ORDER BY tag ASC").unwrap()
     let mut tags: List[Str] = []
     for row in rows {
@@ -181,7 +182,7 @@ fn project_tags_list(project_id: Str) -> List[Str] {
 
 type TaskRow { id: Str, title: Str, priority: Int, status: Str, tags: Str, is_blocked: Bool, project: Str }
 
-fn parse_task_row(row: Row, project_col: Int) -> TaskRow {
+fn parse_task_row(row: db_row.Row, project_col: Int) -> TaskRow {
     TaskRow {
         id: row.get_at(0) ?? "",
         title: row.get_at(1) ?? "",
@@ -193,7 +194,7 @@ fn parse_task_row(row: Row, project_col: Int) -> TaskRow {
     }
 }
 
-fn parse_task_row_with_blocked(row: Row, blocked_col: Int, project_col: Int) -> TaskRow {
+fn parse_task_row_with_blocked(row: db_row.Row, blocked_col: Int, project_col: Int) -> TaskRow {
     TaskRow {
         id: row.get_at(0) ?? "",
         title: row.get_at(1) ?? "",
@@ -205,7 +206,7 @@ fn parse_task_row_with_blocked(row: Row, blocked_col: Int, project_col: Int) -> 
     }
 }
 
-fn parse_task_rows(rows: List[Row], project_col: Int) -> List[TaskRow] {
+fn parse_task_rows(rows: List[db_row.Row], project_col: Int) -> List[TaskRow] {
     let mut result: List[TaskRow] = []
     for row in rows {
         result.push(parse_task_row(row, project_col))
@@ -213,7 +214,7 @@ fn parse_task_rows(rows: List[Row], project_col: Int) -> List[TaskRow] {
     result
 }
 
-fn parse_task_rows_with_blocked(rows: List[Row], blocked_col: Int, project_col: Int) -> List[TaskRow] {
+fn parse_task_rows_with_blocked(rows: List[db_row.Row], blocked_col: Int, project_col: Int) -> List[TaskRow] {
     let mut result: List[TaskRow] = []
     for row in rows {
         result.push(parse_task_row_with_blocked(row, blocked_col, project_col))
@@ -261,7 +262,7 @@ fn str_list_to_json_array(items: List[Str]) -> Int {
 
 // The fields every task-shaped JSON row carries. Callers append their own extras
 // (is_blocked for ls, blockers for blocked) before the trailing "project" key.
-fn task_json_base(t: TaskRow) -> Int {
+fn task_json_base(t: TaskRow) -> Int ! DB.Read {
     let obj = json_new_object()
     json_set(obj, "id", json_new_str(t.id))
     json_set(obj, "title", json_new_str(t.title))
@@ -271,14 +272,14 @@ fn task_json_base(t: TaskRow) -> Int {
     obj
 }
 
-fn ls_task_row_to_json(t: TaskRow) -> Int {
+fn ls_task_row_to_json(t: TaskRow) -> Int ! DB.Read {
     let obj = task_json_base(t)
     json_set(obj, "is_blocked", json_new_bool(if t.is_blocked { 1 } else { 0 }))
     json_set(obj, "project", json_new_str(t.project))
     obj
 }
 
-fn ls_task_rows_to_json(task_rows: List[TaskRow]) -> Str {
+fn ls_task_rows_to_json(task_rows: List[TaskRow]) -> Str ! DB.Read {
     let arr = json_new_array()
     for t in task_rows {
         json_push(arr, ls_task_row_to_json(t))
@@ -286,7 +287,7 @@ fn ls_task_rows_to_json(task_rows: List[TaskRow]) -> Str {
     json_encode(arr)
 }
 
-fn ready_task_rows_to_json(task_rows: List[TaskRow]) -> Str {
+fn ready_task_rows_to_json(task_rows: List[TaskRow]) -> Str ! DB.Read {
     let arr = json_new_array()
     for t in task_rows {
         let obj = task_json_base(t)
@@ -296,7 +297,7 @@ fn ready_task_rows_to_json(task_rows: List[TaskRow]) -> Str {
     json_encode(arr)
 }
 
-fn blocked_rows_to_json(rows: List[Row]) -> Str {
+fn blocked_rows_to_json(rows: List[db_row.Row]) -> Str ! DB.Read {
     let arr = json_new_array()
     for row in rows {
         let t = parse_task_row(row, 6)
@@ -311,13 +312,13 @@ fn blocked_rows_to_json(rows: List[Row]) -> Str {
 
 // --- Activity Logging ---
 
-fn log_activity(task_id: Str, action: Str, session_id: Str) {
+fn log_activity(task_id: Str, action: Str, session_id: Str) ! DB.Write {
     let project_path = env.var("PWD") ?? ""
     let sid = env.var("BR_SESSION_ID") ?? session_id
     db.exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ({task_id}, {action}, {sid}, {project_path})").unwrap()
 }
 
-pub fn cmd_note(id_prefix: Str, content: Str) {
+pub fn cmd_note(id_prefix: Str, content: Str) ! DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     let project_path = env.var("PWD") ?? ""
     let session_id = env.var("BR_SESSION_ID") ?? ""
@@ -337,21 +338,21 @@ fn check_title_len(title: Str) {
     let result = try_check_title_len(title)
     if result.is_err() {
         io.eprintln(result.unwrap_err())
-        exit(1)
+        env.exit(1)
     }
 }
 
-pub fn is_task_id_taken(id: Str) -> Bool {
+pub fn is_task_id_taken(id: Str) -> Bool ! DB.Read {
     !db.query("SELECT id FROM tasks WHERE id = {id}").unwrap().is_empty()
 }
 
-pub fn is_project_id_taken(id: Str) -> Bool {
+pub fn is_project_id_taken(id: Str) -> Bool ! DB.Read {
     !db.query("SELECT id FROM projects WHERE id = {id}").unwrap().is_empty()
 }
 
 // The id space is ~2^30, so collisions are rare but not impossible at scale —
 // retry a handful of times before giving up rather than trusting one draw.
-pub fn generate_unique_task_id() -> Str {
+pub fn generate_unique_task_id() -> Str ! DB.Read {
     let mut i = 0
     while i < 10 {
         let id = generate_id(i)
@@ -361,11 +362,11 @@ pub fn generate_unique_task_id() -> Str {
         i = i + 1
     }
     io.eprintln("Could not generate a unique task id after 10 attempts")
-    exit(1)
+    env.exit(1)
     ""
 }
 
-pub fn generate_unique_project_id() -> Str {
+pub fn generate_unique_project_id() -> Str ! DB.Read {
     let mut i = 0
     while i < 10 {
         let id = generate_id(i)
@@ -375,13 +376,13 @@ pub fn generate_unique_project_id() -> Str {
         i = i + 1
     }
     io.eprintln("Could not generate a unique project id after 10 attempts")
-    exit(1)
+    env.exit(1)
     ""
 }
 
 // --- CRUD Commands ---
 
-pub fn cmd_add(title: Str, description: Str, priority: Int, priority_explicit: Bool, tag_list: List[Str], project_ref: Str, session_id: Str) {
+pub fn cmd_add(title: Str, description: Str, priority: Int, priority_explicit: Bool, tag_list: List[Str], project_ref: Str, session_id: Str) ! DB.Read, DB.Write {
     check_title_len(title)
     let id = generate_unique_task_id()
     if project_ref.is_empty() {
@@ -426,11 +427,11 @@ pub fn try_validate_ls_flags(status_filter: Str, show_closed: Bool, show_all: Bo
     Ok("")
 }
 
-pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json_mode: Bool, show_closed: Bool, show_all: Bool) {
+pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json_mode: Bool, show_closed: Bool, show_all: Bool) ! DB.Read {
     let validation = try_validate_ls_flags(status_filter, show_closed, show_all)
     if validation.is_err() {
         io.eprintln(validation.unwrap_err())
-        exit(1)
+        env.exit(1)
     }
 
     let mut where_parts: List[Str] = []
@@ -466,7 +467,7 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json
     print_task_rows(task_rows, project_ref.is_empty())
 }
 
-pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
+pub fn cmd_show(id_prefix: Str, json_mode: Bool) ! DB.Read {
     let id = resolve_id(id_prefix)
     let row = db.query_one("SELECT id, title, description, status, priority, created_at, updated_at, closed_at FROM tasks WHERE id = {id}").unwrap().unwrap()
     let note_rows = db.query("SELECT content, source, session_id, project_path, created_at FROM task_notes WHERE task_id = {id} ORDER BY created_at ASC").unwrap()
@@ -567,7 +568,7 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) {
     }
 }
 
-fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) {
+fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) ! DB.Read, DB.Write {
     if !title.is_empty() {
         check_title_len(title)
     }
@@ -575,14 +576,14 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
         let valid = ["open", "in_progress", "done", "cancelled"]
         if !list_contains(valid, status) {
             io.eprintln("Invalid status: {status} (must be open, in_progress, done, or cancelled)")
-            exit(1)
+            env.exit(1)
         }
     }
     let has_desc = !description.is_empty()
     let touches_other = !title.is_empty() || priority >= 0 || !status.is_empty() || clear_project || !project_ref.is_empty()
     if !touches_other && !has_desc {
         io.eprintln("Nothing to update")
-        exit(1)
+        env.exit(1)
     }
 
     let mut pid = ""
@@ -617,7 +618,7 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
     io.println("Updated: {short_id(id)}")
 }
 
-pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) {
+pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) ! DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     edit_task(id, title, description, priority, status, project_ref, clear_project, append)
 }
@@ -625,27 +626,27 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
 // Single-id convenience wrappers, kept for API/test compatibility
 // (commands_test.bl calls cmd_start/cmd_done directly) — thin delegations to
 // the batch drivers below rather than independent copies of their logic.
-pub fn cmd_start(id_prefix: Str, session_id: Str) {
+pub fn cmd_start(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "in_progress", "started", session_id)
 }
 
-pub fn cmd_stop(id_prefix: Str, session_id: Str) {
+pub fn cmd_stop(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "open", "stopped", session_id)
 }
 
-pub fn cmd_done(id_prefix: Str, session_id: Str) {
+pub fn cmd_done(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "done", "closed", session_id)
 }
 
-pub fn cmd_cancel(id_prefix: Str, session_id: Str) {
+pub fn cmd_cancel(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "cancelled", "cancelled", session_id)
 }
 
-pub fn cmd_reopen(id_prefix: Str, session_id: Str) {
+pub fn cmd_reopen(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "open", "reopened", session_id)
 }
 
-pub fn cmd_rm(id_prefix: Str) {
+pub fn cmd_rm(id_prefix: Str) ! DB.Read, DB.Write {
     cmd_rm_batch([id_prefix])
 }
 
@@ -657,7 +658,7 @@ pub fn cmd_rm(id_prefix: Str) {
 // pair above) and prints "Updated: {short_id}" per call, so partial progress
 // persists correctly even when a later id fails to resolve.
 
-pub fn run_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) -> Int {
+pub fn run_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) -> Int ! DB.Read, DB.Write {
     let mut failures = 0
     for prefix in id_prefixes {
         let resolved = try_resolve_id(prefix)
@@ -673,14 +674,14 @@ pub fn run_transition_batch(id_prefixes: List[Str], status: Str, action: Str, se
     failures
 }
 
-pub fn cmd_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) {
+pub fn cmd_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) ! DB.Read, DB.Write {
     let failures = run_transition_batch(id_prefixes, status, action, session_id)
     if failures > 0 {
-        exit(1)
+        env.exit(1)
     }
 }
 
-pub fn cmd_rm_batch(id_prefixes: List[Str]) {
+pub fn cmd_rm_batch(id_prefixes: List[Str]) ! DB.Read, DB.Write {
     let mut failures = 0
     // Resolve every prefix against the DB before deleting anything. Two
     // different prefixes (or the same one twice) can resolve to the same
@@ -707,7 +708,7 @@ pub fn cmd_rm_batch(id_prefixes: List[Str]) {
         }
     }
     if failures > 0 {
-        exit(1)
+        env.exit(1)
     }
 }
 
@@ -715,7 +716,7 @@ pub fn cmd_rm_batch(id_prefixes: List[Str]) {
 
 // exclude_id lets a rename keep its own row out of the collision check, so
 // re-casing a project ("Foo" -> "foo") stays legal. Pass "" to check a fresh name.
-pub fn try_project_name_available_excluding(name: Str, exclude_id: Str) -> Result[Str, Str] {
+pub fn try_project_name_available_excluding(name: Str, exclude_id: Str) -> Result[Str, Str] ! DB.Read {
     let existing = db.query("SELECT id FROM projects WHERE name = {name} COLLATE NOCASE AND id != {exclude_id}").unwrap()
     if !existing.is_empty() {
         return Err("Project name already taken: {name}")
@@ -723,15 +724,15 @@ pub fn try_project_name_available_excluding(name: Str, exclude_id: Str) -> Resul
     Ok(name)
 }
 
-pub fn try_project_name_available(name: Str) -> Result[Str, Str] {
+pub fn try_project_name_available(name: Str) -> Result[Str, Str] ! DB.Read {
     try_project_name_available_excluding(name, "")
 }
 
-pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) {
+pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) ! DB.Read, DB.Write {
     let available = try_project_name_available(name)
     if available.is_err() {
         io.eprintln(available.unwrap_err())
-        exit(1)
+        env.exit(1)
     }
     let id = generate_unique_project_id()
     db.exec("INSERT INTO projects (id, name, description) VALUES ({id}, {name}, {description})").unwrap()
@@ -743,7 +744,7 @@ pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) {
     io.println("Created project: {short_id(id)}  {name}")
 }
 
-pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) {
+pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) ! DB.Read {
     let mut where_parts: List[Str] = []
     for clause in build_project_tag_clauses(tag_filters) {
         where_parts.push(clause)
@@ -783,7 +784,7 @@ pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) {
     }
 }
 
-pub fn cmd_project_show(ref: Str, json_mode: Bool) {
+pub fn cmd_project_show(ref: Str, json_mode: Bool) ! DB.Read {
     let id = resolve_project_id(ref)
     let row = db.query_one("SELECT id, name, description, status, created_at, updated_at FROM projects WHERE id = {id}").unwrap().unwrap()
     let name = row.get_at(1) ?? ""
@@ -844,19 +845,19 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) {
     print_task_rows(parse_task_rows_with_blocked(task_rows, 5, 6), false)
 }
 
-pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) {
+pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) ! DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     if !status.is_empty() {
         let valid = ["active", "done", "archived"]
         if !list_contains(valid, status) {
             io.eprintln("Invalid status: {status} (must be active, done, or archived)")
-            exit(1)
+            env.exit(1)
         }
     }
     let has_desc = !description.is_empty()
     if name.is_empty() && status.is_empty() && !has_desc {
         io.eprintln("Nothing to update")
-        exit(1)
+        env.exit(1)
     }
     // Without this, a rename can mint the case-variant duplicate that project add
     // rejects, after which try_resolve_project_id calls both projects ambiguous and
@@ -865,7 +866,7 @@ pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) {
         let available = try_project_name_available_excluding(name, id)
         if available.is_err() {
             io.eprintln(available.unwrap_err())
-            exit(1)
+            env.exit(1)
         }
     }
 
@@ -884,13 +885,13 @@ pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) {
     io.println("Updated project: {short_id(id)}")
 }
 
-pub fn cmd_project_rm(ref: Str) {
+pub fn cmd_project_rm(ref: Str) ! DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     db.exec("DELETE FROM projects WHERE id = {id}").unwrap()
     io.println("Deleted project: {short_id(id)}")
 }
 
-pub fn cmd_project_tag(ref: Str, tags: List[Str]) {
+pub fn cmd_project_tag(ref: Str, tags: List[Str]) ! DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     for tag in tags {
         db.exec("INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES ({id}, {tag})").unwrap()
@@ -898,7 +899,7 @@ pub fn cmd_project_tag(ref: Str, tags: List[Str]) {
     io.println("Tagged project: {short_id(id)}")
 }
 
-pub fn cmd_project_untag(ref: Str, tags: List[Str]) {
+pub fn cmd_project_untag(ref: Str, tags: List[Str]) ! DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     for tag in tags {
         db.exec("DELETE FROM project_tags WHERE project_id = {id} AND tag = {tag}").unwrap()
@@ -908,7 +909,7 @@ pub fn cmd_project_untag(ref: Str, tags: List[Str]) {
 
 // --- DAG Commands ---
 
-pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
+pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) ! DB.Read {
     let mut tag_clause = ""
     let tag_clauses = build_tag_clauses(tag_filters)
     if !tag_clauses.is_empty() {
@@ -933,7 +934,7 @@ pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
     print_task_rows(parse_task_rows(rows, 5), project_ref.is_empty())
 }
 
-pub fn has_cycle(from_id: Str, to_id: Str) -> Bool {
+pub fn has_cycle(from_id: Str, to_id: Str) -> Bool ! DB.Read {
     let all_deps = db.query("SELECT blocker_id, blocked_id FROM deps").unwrap()
     let mut adj: Map[Str, List[Str]] = Map()
     for dep in all_deps {
@@ -968,32 +969,32 @@ pub fn has_cycle(from_id: Str, to_id: Str) -> Bool {
     false
 }
 
-pub fn cmd_dep_add(blocker_prefix: Str, blocked_prefix: Str) {
+pub fn cmd_dep_add(blocker_prefix: Str, blocked_prefix: Str) ! DB.Read, DB.Write {
     let blocker_id = resolve_id(blocker_prefix)
     let blocked_id = resolve_id(blocked_prefix)
 
     if blocker_id == blocked_id {
         io.eprintln("A task cannot block itself")
-        exit(1)
+        env.exit(1)
     }
 
     if has_cycle(blocker_id, blocked_id) {
         io.eprintln("Cannot add dependency: would create a cycle")
-        exit(1)
+        env.exit(1)
     }
 
     db.exec("INSERT OR IGNORE INTO deps (blocker_id, blocked_id) VALUES ({blocker_id}, {blocked_id})").unwrap()
     io.println("Added: {short_id(blocker_id)} blocks {short_id(blocked_id)}")
 }
 
-pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) {
+pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) ! DB.Read, DB.Write {
     let blocker_id = resolve_id(blocker_prefix)
     let blocked_id = resolve_id(blocked_prefix)
     db.exec("DELETE FROM deps WHERE blocker_id = {blocker_id} AND blocked_id = {blocked_id}").unwrap()
     io.println("Removed: {short_id(blocker_id)} no longer blocks {short_id(blocked_id)}")
 }
 
-pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) {
+pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) ! DB.Read {
     let mut tag_clause = ""
     let tag_clauses = build_tag_clauses(tag_filters)
     if !tag_clauses.is_empty() {
@@ -1075,7 +1076,7 @@ fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: Tre
     }
 }
 
-pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project_ref: Str) {
+pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project_ref: Str) ! DB.Read {
     let mut where_parts: List[Str] = []
     if !show_all {
         where_parts.push("t.status NOT IN ('done', 'cancelled')")
@@ -1191,7 +1192,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project
 
 // --- Tag Commands ---
 
-pub fn cmd_tag(id_prefix: Str, tags: List[Str]) {
+pub fn cmd_tag(id_prefix: Str, tags: List[Str]) ! DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     for tag in tags {
         db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ({id}, {tag})").unwrap()
@@ -1199,7 +1200,7 @@ pub fn cmd_tag(id_prefix: Str, tags: List[Str]) {
     io.println("Tagged: {short_id(id)}")
 }
 
-pub fn cmd_untag(id_prefix: Str, tags: List[Str]) {
+pub fn cmd_untag(id_prefix: Str, tags: List[Str]) ! DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     for tag in tags {
         db.exec("DELETE FROM tags WHERE task_id = {id} AND tag = {tag}").unwrap()
@@ -1207,7 +1208,7 @@ pub fn cmd_untag(id_prefix: Str, tags: List[Str]) {
     io.println("Untagged: {short_id(id)}")
 }
 
-pub fn cmd_tags() {
+pub fn cmd_tags() ! DB.Read {
     let rows = db.query("SELECT tag, COUNT(*) as count FROM tags GROUP BY tag ORDER BY count DESC, tag ASC").unwrap()
     if rows.is_empty() {
         io.println("No tags found.")
@@ -1220,7 +1221,7 @@ pub fn cmd_tags() {
     }
 }
 
-pub fn cmd_stats(tag_filters: List[Str], project_ref: Str) {
+pub fn cmd_stats(tag_filters: List[Str], project_ref: Str) ! DB.Read {
     let mut tag_joins: List[Str] = []
     let mut tag_wheres: List[Str] = []
     let mut ti = 0
@@ -1257,16 +1258,20 @@ type TagDiff { added: List[Str], removed: List[Str] }
 pub fn parse_vi_content(new_content: Str) -> ParsedEdit {
     let mut header = ""
     let mut body = ""
-    let sep_idx = new_content.index_of("\n---\n")
-    if sep_idx >= 0 {
-        header = new_content.slice(0, sep_idx)
-        body = new_content.slice(sep_idx + 5, new_content.len())
-    } else if new_content.ends_with("\n---") {
-        header = new_content.slice(0, new_content.len() - 4)
-        body = ""
-    } else {
-        header = new_content
-        body = ""
+    match new_content.index_of("\n---\n") {
+        Some(sep_idx) => {
+            header = new_content.substring(0, sep_idx)
+            body = new_content.substring(sep_idx + 5, new_content.len())
+        }
+        None => {
+            if new_content.ends_with("\n---") {
+                header = new_content.substring(0, new_content.len() - 4)
+                body = ""
+            } else {
+                header = new_content
+                body = ""
+            }
+        }
     }
 
     let mut new_title = ""
@@ -1280,18 +1285,18 @@ pub fn parse_vi_content(new_content: Str) -> ParsedEdit {
         if trimmed.is_empty() || trimmed.starts_with("#") {
             // skip
         } else if trimmed.starts_with("title:") {
-            new_title = trimmed.slice(6, trimmed.len()).trim()
+            new_title = trimmed.substring(6, trimmed.len()).trim()
         } else if trimmed.starts_with("priority:") {
-            let pval = trimmed.slice(9, trimmed.len()).trim().to_upper()
+            let pval = trimmed.substring(9, trimmed.len()).trim().to_upper()
             if pval.starts_with("P") {
-                new_priority = pval.slice(1, pval.len()).to_int()
+                new_priority = pval.substring(1, pval.len()).to_int()
             } else {
                 new_priority = pval.to_int()
             }
         } else if trimmed.starts_with("status:") {
-            new_status = trimmed.slice(7, trimmed.len()).trim()
+            new_status = trimmed.substring(7, trimmed.len()).trim()
         } else if trimmed.starts_with("tags:") {
-            new_tags_str = trimmed.slice(5, trimmed.len()).trim()
+            new_tags_str = trimmed.substring(5, trimmed.len()).trim()
         }
     }
 
@@ -1368,7 +1373,7 @@ pub fn shell_quote(s: Str) -> Str {
     "'{s.replace("'", "'\\''")}'"
 }
 
-pub fn cmd_vi(id_prefix: Str) {
+pub fn cmd_vi(id_prefix: Str) ! DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     let sid = short_id(id)
 
@@ -1401,7 +1406,7 @@ pub fn cmd_vi(id_prefix: Str) {
     if exit_code != 0 {
         process_run("rm", ["-f", tmp_path])
         io.eprintln("Editor exited with error, aborting.")
-        exit(1)
+        env.exit(1)
     }
 
     let new_content = read_file(tmp_path)
@@ -1422,7 +1427,7 @@ pub fn cmd_vi(id_prefix: Str) {
     let validated = try_validate_edit_fields(new_title, new_status, new_priority)
     if validated.is_err() {
         io.eprintln(validated.unwrap_err())
-        exit(1)
+        env.exit(1)
     }
 
     let mut changes: List[Str] = []
@@ -1517,7 +1522,7 @@ pub fn cmd_install() {
         let result = process_run("mkdir", ["-p", skill_dir])
         if result.exit_code != 0 {
             io.eprintln("Failed to create {skill_dir}")
-            exit(1)
+            env.exit(1)
         }
         write_file(path_join(skill_dir, "SKILL.md"), content)
         io.println("  Installed: br:{name}")

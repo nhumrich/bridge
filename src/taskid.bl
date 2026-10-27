@@ -4,7 +4,7 @@ fn hex_to_int(hex: Str) -> Int {
     let mut value = 0
     let mut i = 0
     while i < hex.len() {
-        let c = hex.slice(i, i + 1)
+        let c = hex.substring(i, i + 1)
         value = value * 16
         if c == "0" { value = value + 0 }
         else if c == "1" { value = value + 1 }
@@ -28,7 +28,7 @@ fn hex_to_int(hex: Str) -> Int {
 }
 
 fn base32_char(value: Int) -> Str {
-    CROCKFORD.slice(value, value + 1)
+    CROCKFORD.substring(value, value + 1)
 }
 
 // Takes 12 hex chars (6 random bytes). One byte -> one char: byte % 32 is
@@ -38,7 +38,7 @@ pub fn id_from_hex(hex: Str) -> Str {
     let mut out: List[Str] = []
     let mut i = 0
     while i < hex.len() {
-        let byte = hex_to_int(hex.slice(i, i + 2))
+        let byte = hex_to_int(hex.substring(i, i + 2))
         out.push(base32_char(byte % 32))
         i = i + 2
     }
@@ -75,7 +75,7 @@ pub fn is_valid_id(s: Str) -> Bool {
     }
     let mut i = 0
     while i < s.len() {
-        let c = s.slice(i, i + 1)
+        let c = s.substring(i, i + 1)
         if !CROCKFORD.contains(c) {
             return false
         }

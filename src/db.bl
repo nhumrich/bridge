@@ -7,13 +7,13 @@ pub fn db_path() -> Str {
         let result = process_run("mkdir", ["-p", dir])
         if result.exit_code != 0 {
             io.eprintln("Failed to create data directory: {result.err_out}")
-            exit(1)
+            env.exit(1)
         }
     }
     "{dir}/bridge.db"
 }
 
-pub fn init_db() {
+pub fn init_db() ! DB.Read, DB.Write {
     db.query("PRAGMA busy_timeout=5000").unwrap()
     db.query("PRAGMA journal_mode=WAL").unwrap()
     db.query("PRAGMA foreign_keys=ON").unwrap()
@@ -79,7 +79,7 @@ pub fn init_db() {
 
 // SQLite has no `ADD COLUMN IF NOT EXISTS`; guard on PRAGMA table_info so this
 // is a single idempotent path for both new and pre-projects databases.
-fn migrate_tasks_project_id() {
+fn migrate_tasks_project_id() ! DB.Read, DB.Write {
     let cols = db.query("PRAGMA table_info(tasks)").unwrap()
     let mut has_project_id = false
     for col in cols {

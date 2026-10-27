@@ -8,7 +8,7 @@ fn use_color() -> Bool {
 
 pub fn short_id(id: Str) -> Str {
     if id.len() > 8 {
-        return id.slice(0, 8)
+        return id.substring(0, 8)
     }
     id
 }
@@ -58,7 +58,7 @@ pub fn format_task_line(id: Str, title: Str, priority: Int, status: Str, tags: S
     let pstr = format_priority(priority)
     let sstr = format_status(status, is_blocked)
     let clean = sanitize_title(title)
-    let display_title = if clean.len() > 72 { "{clean.slice(0, 72)}..." } else { clean }
+    let display_title = if clean.len() > 72 { "{clean.substring(0, 72)}..." } else { clean }
     let color = use_color()
     let mut tag_part = ""
     if !tags.is_empty() {

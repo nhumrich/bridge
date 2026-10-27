@@ -2,12 +2,12 @@ import std.db
 import db.{init_db}
 import commands.{try_resolve_project_id, try_project_name_available, try_project_name_available_excluding}
 
-fn setup_test_db() {
+fn setup_test_db() ! DB.Read, DB.Write {
     init_db()
 }
 
 test "try_resolve_project_id resolves exact-case name" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Ok("p1aaaa")
@@ -16,7 +16,7 @@ test "try_resolve_project_id resolves exact-case name" {
 }
 
 test "try_resolve_project_id resolves uppercase name against mixed-case stored name" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Ok("p1aaaa")
@@ -25,7 +25,7 @@ test "try_resolve_project_id resolves uppercase name against mixed-case stored n
 }
 
 test "try_resolve_project_id resolves lowercase name against mixed-case stored name" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Ok("p1aaaa")
@@ -34,7 +34,7 @@ test "try_resolve_project_id resolves lowercase name against mixed-case stored n
 }
 
 test "try_resolve_project_id resolves mixed-case name against mixed-case stored name" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Ok("p1aaaa")
@@ -43,7 +43,7 @@ test "try_resolve_project_id resolves mixed-case name against mixed-case stored 
 }
 
 test "try_resolve_project_id still resolves by id prefix" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Ok("p1aaaa")
@@ -52,7 +52,7 @@ test "try_resolve_project_id still resolves by id prefix" {
 }
 
 test "try_resolve_project_id raises ambiguity error for case-variant name collisions" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         db.exec("INSERT INTO projects (id, name) VALUES ('p2bbbb', 'FOO')").unwrap()
@@ -62,7 +62,7 @@ test "try_resolve_project_id raises ambiguity error for case-variant name collis
 }
 
 test "try_project_name_available rejects a differently-cased duplicate" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Err("Project name already taken: foo")
@@ -73,7 +73,7 @@ test "try_project_name_available rejects a differently-cased duplicate" {
 // A rename must not be blocked by the project's own row, otherwise re-casing
 // "Foo" to "foo" would be rejected as a duplicate of itself.
 test "try_project_name_available_excluding allows a project to re-case its own name" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Ok("foo")
@@ -84,7 +84,7 @@ test "try_project_name_available_excluding allows a project to re-case its own n
 // The guard cmd_project_edit relies on: renaming onto another project's
 // case-variant name is what makes both rows unresolvable by name.
 test "try_project_name_available_excluding rejects a rename onto another project's name" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         db.exec("INSERT INTO projects (id, name) VALUES ('p2bbbb', 'Bar')").unwrap()
@@ -94,7 +94,7 @@ test "try_project_name_available_excluding rejects a rename onto another project
 }
 
 test "try_project_name_available accepts a genuinely new name" {
-    with db.connect(":memory:") {
+    with db.connect(":memory:").unwrap() {
         setup_test_db()
         db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'Foo')").unwrap()
         let expected: Result[Str, Str] = Ok("Bar")

@@ -35,7 +35,7 @@ test "id_from_seed returns 6 valid crockford chars" {
     assert_eq(id.len(), 6)
     let mut i = 0
     while i < id.len() {
-        let c = id.slice(i, i + 1)
+        let c = id.substring(i, i + 1)
         assert(CROCKFORD.contains(c))
         i = i + 1
     }

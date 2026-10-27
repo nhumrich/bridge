@@ -189,3 +189,11 @@ test "shell_quote escapes a single quote" {
 test "shell_quote handles a path with a space" {
     assert_eq(shell_quote("/tmp/my dir/file.txt"), "'/tmp/my dir/file.txt'")
 }
+
+test "parse_vi_content splits header and body with non-ASCII text" {
+    let content = "title: Café ☕ résumé\npriority: P2\nstatus: open\ntags: a\n---\nDéscription ☕ here"
+    let parsed = parse_vi_content(content)
+    assert_eq(parsed.title, "Café ☕ résumé")
+    assert_eq(parsed.priority, 2)
+    assert_eq(parsed.desc, "Déscription ☕ here")
+}
