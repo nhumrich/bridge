@@ -34,7 +34,7 @@ fn parse_priority(s: Str) -> Int ! Env.Exit, IO.Eprint {
 // arg-count validation -- the two tables aren't linked.
 fn build_parser() -> ArgParser {
     let mut p = argparser_new("br", "Bridge Task Manager")
-    p = set_version(p, "0.12.0")
+    p = set_version(p, "0.13.0")
 
     p = add_flag(p, "--json", "-j", "JSON output")
 
