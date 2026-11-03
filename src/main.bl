@@ -14,7 +14,7 @@ fn args_positionals_from(a: Args, start: Int) -> List[Str] {
     result
 }
 
-fn parse_priority(s: Str) -> Int {
+fn parse_priority(s: Str) -> Int ! Env.Exit, IO.Eprint {
     let mut val = s.to_lower()
     if val.starts_with("p") { val = val.substring(1, val.len()) }
     let n = val.to_int()
@@ -165,7 +165,7 @@ fn build_parser() -> ArgParser {
     p
 }
 
-fn run() ! DB.Read, DB.Write {
+fn run() ! Env.Read, Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint, Process.Spawn, DB.Read, DB.Write {
     init_db()
 
     let p = build_parser()

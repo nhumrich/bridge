@@ -5,6 +5,31 @@ import display.{short_id, format_priority, format_task_line, format_task_detail,
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_new_int, json_new_bool, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
 import std.path.{path_join}
 
+fn path_exists(p: Str) -> Bool ! FS.Read {
+    fs.stat(p).is_ok()
+}
+
+fn read_or_exit(path: Str) -> Str ! FS.Read, IO.Eprint, Env.Exit {
+    match fs.read(path) {
+        Ok(text) => text
+        Err(e) => {
+            io.eprintln("Cannot read {path}: {e}")
+            env.exit(1)
+            ""
+        }
+    }
+}
+
+fn write_or_exit(path: Str, content: Str) ! FS.Write, IO.Eprint, Env.Exit {
+    match fs.write(path, content) {
+        Ok(_) => {}
+        Err(e) => {
+            io.eprintln("Cannot write {path}: {e}")
+            env.exit(1)
+        }
+    }
+}
+
 pub fn list_contains(items: List[Str], target: Str) -> Bool {
     for item in items {
         if item == target {
@@ -106,7 +131,7 @@ pub fn try_resolve_id(prefix: Str) -> Result[Str, Str] ! DB.Read {
     Ok(rows.get(0).unwrap().get_at(0) ?? "")
 }
 
-pub fn resolve_id(prefix: Str) -> Str ! DB.Read {
+pub fn resolve_id(prefix: Str) -> Str ! Env.Exit, IO.Eprint, DB.Read {
     let result = try_resolve_id(prefix)
     if result.is_err() {
         io.eprintln(result.unwrap_err())
@@ -130,7 +155,7 @@ pub fn try_resolve_project_id(ref: Str) -> Result[Str, Str] ! DB.Read {
     Ok(rows.get(0).unwrap().get_at(0) ?? "")
 }
 
-pub fn resolve_project_id(ref: Str) -> Str ! DB.Read {
+pub fn resolve_project_id(ref: Str) -> Str ! Env.Exit, IO.Eprint, DB.Read {
     let result = try_resolve_project_id(ref)
     if result.is_err() {
         io.eprintln(result.unwrap_err())
@@ -139,7 +164,7 @@ pub fn resolve_project_id(ref: Str) -> Str ! DB.Read {
     result.unwrap()
 }
 
-pub fn build_project_clause(project_ref: Str) -> Str ! DB.Read {
+pub fn build_project_clause(project_ref: Str) -> Str ! Env.Exit, IO.Eprint, DB.Read {
     if project_ref.is_empty() {
         return ""
     }
@@ -226,7 +251,7 @@ fn gated_project(project: Str, show: Bool) -> Str {
     if show { project } else { "" }
 }
 
-fn print_task_rows(task_rows: List[TaskRow], show_project: Bool) {
+fn print_task_rows(task_rows: List[TaskRow], show_project: Bool) ! Env.Read, IO.Print {
     for t in task_rows {
         let proj = gated_project(t.project, show_project)
         io.println(format_task_line(t.id, t.title, t.priority, t.status, t.tags, t.is_blocked, proj))
@@ -312,13 +337,13 @@ fn blocked_rows_to_json(rows: List[db_row.Row]) -> Str ! DB.Read {
 
 // --- Activity Logging ---
 
-fn log_activity(task_id: Str, action: Str, session_id: Str) ! DB.Write {
+fn log_activity(task_id: Str, action: Str, session_id: Str) ! Env.Read, DB.Write {
     let project_path = env.var("PWD") ?? ""
     let sid = env.var("BR_SESSION_ID") ?? session_id
     db.exec("INSERT INTO activity_log (task_id, action, session_id, project_path) VALUES ({task_id}, {action}, {sid}, {project_path})").unwrap()
 }
 
-pub fn cmd_note(id_prefix: Str, content: Str) ! DB.Read, DB.Write {
+pub fn cmd_note(id_prefix: Str, content: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     let project_path = env.var("PWD") ?? ""
     let session_id = env.var("BR_SESSION_ID") ?? ""
@@ -334,7 +359,7 @@ pub fn try_check_title_len(title: Str) -> Result[Str, Str] {
     Ok(title)
 }
 
-fn check_title_len(title: Str) {
+fn check_title_len(title: Str) ! Env.Exit, IO.Eprint {
     let result = try_check_title_len(title)
     if result.is_err() {
         io.eprintln(result.unwrap_err())
@@ -352,7 +377,7 @@ pub fn is_project_id_taken(id: Str) -> Bool ! DB.Read {
 
 // The id space is ~2^30, so collisions are rare but not impossible at scale —
 // retry a handful of times before giving up rather than trusting one draw.
-pub fn generate_unique_task_id() -> Str ! DB.Read {
+pub fn generate_unique_task_id() -> Str ! Env.Exit, IO.Eprint, Process.Spawn, DB.Read {
     let mut i = 0
     while i < 10 {
         let id = generate_id(i)
@@ -366,7 +391,7 @@ pub fn generate_unique_task_id() -> Str ! DB.Read {
     ""
 }
 
-pub fn generate_unique_project_id() -> Str ! DB.Read {
+pub fn generate_unique_project_id() -> Str ! Env.Exit, IO.Eprint, Process.Spawn, DB.Read {
     let mut i = 0
     while i < 10 {
         let id = generate_id(i)
@@ -382,7 +407,7 @@ pub fn generate_unique_project_id() -> Str ! DB.Read {
 
 // --- CRUD Commands ---
 
-pub fn cmd_add(title: Str, description: Str, priority: Int, priority_explicit: Bool, tag_list: List[Str], project_ref: Str, session_id: Str) ! DB.Read, DB.Write {
+pub fn cmd_add(title: Str, description: Str, priority: Int, priority_explicit: Bool, tag_list: List[Str], project_ref: Str, session_id: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, Process.Spawn, DB.Read, DB.Write {
     check_title_len(title)
     let id = generate_unique_task_id()
     if project_ref.is_empty() {
@@ -427,7 +452,7 @@ pub fn try_validate_ls_flags(status_filter: Str, show_closed: Bool, show_all: Bo
     Ok("")
 }
 
-pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json_mode: Bool, show_closed: Bool, show_all: Bool) ! DB.Read {
+pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json_mode: Bool, show_closed: Bool, show_all: Bool) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read {
     let validation = try_validate_ls_flags(status_filter, show_closed, show_all)
     if validation.is_err() {
         io.eprintln(validation.unwrap_err())
@@ -467,7 +492,7 @@ pub fn cmd_ls(status_filter: Str, tag_filters: List[Str], project_ref: Str, json
     print_task_rows(task_rows, project_ref.is_empty())
 }
 
-pub fn cmd_show(id_prefix: Str, json_mode: Bool) ! DB.Read {
+pub fn cmd_show(id_prefix: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read {
     let id = resolve_id(id_prefix)
     let row = db.query_one("SELECT id, title, description, status, priority, created_at, updated_at, closed_at FROM tasks WHERE id = {id}").unwrap().unwrap()
     let note_rows = db.query("SELECT content, source, session_id, project_path, created_at FROM task_notes WHERE task_id = {id} ORDER BY created_at ASC").unwrap()
@@ -568,7 +593,7 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) ! DB.Read {
     }
 }
 
-fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) ! DB.Read, DB.Write {
+fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     if !title.is_empty() {
         check_title_len(title)
     }
@@ -618,7 +643,7 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
     io.println("Updated: {short_id(id)}")
 }
 
-pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) ! DB.Read, DB.Write {
+pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     edit_task(id, title, description, priority, status, project_ref, clear_project, append)
 }
@@ -626,27 +651,27 @@ pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, sta
 // Single-id convenience wrappers, kept for API/test compatibility
 // (commands_test.bl calls cmd_start/cmd_done directly) — thin delegations to
 // the batch drivers below rather than independent copies of their logic.
-pub fn cmd_start(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
+pub fn cmd_start(id_prefix: Str, session_id: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "in_progress", "started", session_id)
 }
 
-pub fn cmd_stop(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
+pub fn cmd_stop(id_prefix: Str, session_id: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "open", "stopped", session_id)
 }
 
-pub fn cmd_done(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
+pub fn cmd_done(id_prefix: Str, session_id: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "done", "closed", session_id)
 }
 
-pub fn cmd_cancel(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
+pub fn cmd_cancel(id_prefix: Str, session_id: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "cancelled", "cancelled", session_id)
 }
 
-pub fn cmd_reopen(id_prefix: Str, session_id: Str) ! DB.Read, DB.Write {
+pub fn cmd_reopen(id_prefix: Str, session_id: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     cmd_transition_batch([id_prefix], "open", "reopened", session_id)
 }
 
-pub fn cmd_rm(id_prefix: Str) ! DB.Read, DB.Write {
+pub fn cmd_rm(id_prefix: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     cmd_rm_batch([id_prefix])
 }
 
@@ -658,7 +683,7 @@ pub fn cmd_rm(id_prefix: Str) ! DB.Read, DB.Write {
 // pair above) and prints "Updated: {short_id}" per call, so partial progress
 // persists correctly even when a later id fails to resolve.
 
-pub fn run_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) -> Int ! DB.Read, DB.Write {
+pub fn run_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) -> Int ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let mut failures = 0
     for prefix in id_prefixes {
         let resolved = try_resolve_id(prefix)
@@ -674,14 +699,14 @@ pub fn run_transition_batch(id_prefixes: List[Str], status: Str, action: Str, se
     failures
 }
 
-pub fn cmd_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) ! DB.Read, DB.Write {
+pub fn cmd_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let failures = run_transition_batch(id_prefixes, status, action, session_id)
     if failures > 0 {
         env.exit(1)
     }
 }
 
-pub fn cmd_rm_batch(id_prefixes: List[Str]) ! DB.Read, DB.Write {
+pub fn cmd_rm_batch(id_prefixes: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let mut failures = 0
     // Resolve every prefix against the DB before deleting anything. Two
     // different prefixes (or the same one twice) can resolve to the same
@@ -728,7 +753,7 @@ pub fn try_project_name_available(name: Str) -> Result[Str, Str] ! DB.Read {
     try_project_name_available_excluding(name, "")
 }
 
-pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) ! DB.Read, DB.Write {
+pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, Process.Spawn, DB.Read, DB.Write {
     let available = try_project_name_available(name)
     if available.is_err() {
         io.eprintln(available.unwrap_err())
@@ -744,7 +769,7 @@ pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) ! DB.Re
     io.println("Created project: {short_id(id)}  {name}")
 }
 
-pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) ! DB.Read {
+pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) ! Env.Read, IO.Print, DB.Read {
     let mut where_parts: List[Str] = []
     for clause in build_project_tag_clauses(tag_filters) {
         where_parts.push(clause)
@@ -784,7 +809,7 @@ pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) ! DB.Read {
     }
 }
 
-pub fn cmd_project_show(ref: Str, json_mode: Bool) ! DB.Read {
+pub fn cmd_project_show(ref: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read {
     let id = resolve_project_id(ref)
     let row = db.query_one("SELECT id, name, description, status, created_at, updated_at FROM projects WHERE id = {id}").unwrap().unwrap()
     let name = row.get_at(1) ?? ""
@@ -845,7 +870,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) ! DB.Read {
     print_task_rows(parse_task_rows_with_blocked(task_rows, 5, 6), false)
 }
 
-pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) ! DB.Read, DB.Write {
+pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     if !status.is_empty() {
         let valid = ["active", "done", "archived"]
@@ -885,13 +910,13 @@ pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) ! DB
     io.println("Updated project: {short_id(id)}")
 }
 
-pub fn cmd_project_rm(ref: Str) ! DB.Read, DB.Write {
+pub fn cmd_project_rm(ref: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     db.exec("DELETE FROM projects WHERE id = {id}").unwrap()
     io.println("Deleted project: {short_id(id)}")
 }
 
-pub fn cmd_project_tag(ref: Str, tags: List[Str]) ! DB.Read, DB.Write {
+pub fn cmd_project_tag(ref: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     for tag in tags {
         db.exec("INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES ({id}, {tag})").unwrap()
@@ -899,7 +924,7 @@ pub fn cmd_project_tag(ref: Str, tags: List[Str]) ! DB.Read, DB.Write {
     io.println("Tagged project: {short_id(id)}")
 }
 
-pub fn cmd_project_untag(ref: Str, tags: List[Str]) ! DB.Read, DB.Write {
+pub fn cmd_project_untag(ref: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     for tag in tags {
         db.exec("DELETE FROM project_tags WHERE project_id = {id} AND tag = {tag}").unwrap()
@@ -909,7 +934,7 @@ pub fn cmd_project_untag(ref: Str, tags: List[Str]) ! DB.Read, DB.Write {
 
 // --- DAG Commands ---
 
-pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) ! DB.Read {
+pub fn cmd_ready(tag_filters: List[Str], project_ref: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read {
     let mut tag_clause = ""
     let tag_clauses = build_tag_clauses(tag_filters)
     if !tag_clauses.is_empty() {
@@ -969,7 +994,7 @@ pub fn has_cycle(from_id: Str, to_id: Str) -> Bool ! DB.Read {
     false
 }
 
-pub fn cmd_dep_add(blocker_prefix: Str, blocked_prefix: Str) ! DB.Read, DB.Write {
+pub fn cmd_dep_add(blocker_prefix: Str, blocked_prefix: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let blocker_id = resolve_id(blocker_prefix)
     let blocked_id = resolve_id(blocked_prefix)
 
@@ -987,14 +1012,14 @@ pub fn cmd_dep_add(blocker_prefix: Str, blocked_prefix: Str) ! DB.Read, DB.Write
     io.println("Added: {short_id(blocker_id)} blocks {short_id(blocked_id)}")
 }
 
-pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) ! DB.Read, DB.Write {
+pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let blocker_id = resolve_id(blocker_prefix)
     let blocked_id = resolve_id(blocked_prefix)
     db.exec("DELETE FROM deps WHERE blocker_id = {blocker_id} AND blocked_id = {blocked_id}").unwrap()
     io.println("Removed: {short_id(blocker_id)} no longer blocks {short_id(blocked_id)}")
 }
 
-pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) ! DB.Read {
+pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read {
     let mut tag_clause = ""
     let tag_clauses = build_tag_clauses(tag_filters)
     if !tag_clauses.is_empty() {
@@ -1047,7 +1072,7 @@ type TreeCtx {
     show_project: Bool
 }
 
-fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: TreeCtx) {
+fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: TreeCtx) ! Env.Read, IO.Print {
     let t = ctx.tasks.get(task_id).unwrap()
     let proj = gated_project(t.project, ctx.show_project)
     let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags, t.is_blocked, proj)
@@ -1076,7 +1101,7 @@ fn render_tree(task_id: Str, prefix: Str, is_last: Bool, is_root: Bool, ctx: Tre
     }
 }
 
-pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project_ref: Str) ! DB.Read {
+pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project_ref: Str) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read {
     let mut where_parts: List[Str] = []
     if !show_all {
         where_parts.push("t.status NOT IN ('done', 'cancelled')")
@@ -1192,7 +1217,7 @@ pub fn cmd_graph(id_prefix: Str, tag_filters: List[Str], show_all: Bool, project
 
 // --- Tag Commands ---
 
-pub fn cmd_tag(id_prefix: Str, tags: List[Str]) ! DB.Read, DB.Write {
+pub fn cmd_tag(id_prefix: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     for tag in tags {
         db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ({id}, {tag})").unwrap()
@@ -1200,7 +1225,7 @@ pub fn cmd_tag(id_prefix: Str, tags: List[Str]) ! DB.Read, DB.Write {
     io.println("Tagged: {short_id(id)}")
 }
 
-pub fn cmd_untag(id_prefix: Str, tags: List[Str]) ! DB.Read, DB.Write {
+pub fn cmd_untag(id_prefix: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     for tag in tags {
         db.exec("DELETE FROM tags WHERE task_id = {id} AND tag = {tag}").unwrap()
@@ -1208,7 +1233,7 @@ pub fn cmd_untag(id_prefix: Str, tags: List[Str]) ! DB.Read, DB.Write {
     io.println("Untagged: {short_id(id)}")
 }
 
-pub fn cmd_tags() ! DB.Read {
+pub fn cmd_tags() ! IO.Print, DB.Read {
     let rows = db.query("SELECT tag, COUNT(*) as count FROM tags GROUP BY tag ORDER BY count DESC, tag ASC").unwrap()
     if rows.is_empty() {
         io.println("No tags found.")
@@ -1221,7 +1246,7 @@ pub fn cmd_tags() ! DB.Read {
     }
 }
 
-pub fn cmd_stats(tag_filters: List[Str], project_ref: Str) ! DB.Read {
+pub fn cmd_stats(tag_filters: List[Str], project_ref: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read {
     let mut tag_joins: List[Str] = []
     let mut tag_wheres: List[Str] = []
     let mut ti = 0
@@ -1356,24 +1381,27 @@ pub fn diff_tags(old_tags: List[Str], new_tags_str: Str) -> TagDiff {
 // $TMPDIR + a fresh generate_id() suffix per call, so two concurrent `br vi` on the
 // same task never land on the same path. Not a fix for the TOCTOU class (see commit
 // message) — just eliminates the same-task collision.
-pub fn vi_tmp_path(sid: Str) -> Str {
+pub fn vi_tmp_path(sid: Str) -> Str ! Env.Read, Process.Spawn {
     let configured = env.var("TMPDIR") ?? ""
     // An exported-but-empty TMPDIR would otherwise root the temp file at "/", where
-    // write_file (Void return, no error signal) fails silently and cmd_vi dies with a
-    // misleading "title cannot be empty".
+    // write fails and cmd_vi dies with a misleading "title cannot be empty".
     let tmpdir = if configured.is_empty() { "/tmp" } else { configured }
     "{tmpdir}/br-edit-{sid}-{generate_id(0)}.txt"
 }
 
 // Single-quote for POSIX shells: close the quote, escape the literal ', reopen it.
-// $TMPDIR is attacker-controllable input flowing into a shell_exec command line;
+// $TMPDIR is attacker-controllable input flowing into a shell command line;
 // only the path gets quoted here, never the $EDITOR string (which legitimately
 // carries multiple words, e.g. "vim -u NONE").
 pub fn shell_quote(s: Str) -> Str {
     "'{s.replace("'", "'\\''")}'"
 }
 
-pub fn cmd_vi(id_prefix: Str) ! DB.Read, DB.Write {
+pub fn editor_command(editor: Str, path: Str) -> Str {
+    "{editor} {shell_quote(path)} </dev/tty >/dev/tty 2>/dev/tty"
+}
+
+pub fn cmd_vi(id_prefix: Str) ! Env.Read, Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint, Process.Spawn, DB.Read, DB.Write {
     let id = resolve_id(id_prefix)
     let sid = short_id(id)
 
@@ -1399,18 +1427,28 @@ pub fn cmd_vi(id_prefix: Str) ! DB.Read, DB.Write {
     let content = lines.join("\n")
 
     let tmp_path = vi_tmp_path(sid)
-    write_file(tmp_path, content)
+    write_or_exit(tmp_path, content)
 
     let editor = env.var("EDITOR") ?? "vi"
-    let exit_code = shell_exec("{editor} {shell_quote(tmp_path)}")
-    if exit_code != 0 {
-        process_run("rm", ["-f", tmp_path])
+    // process.run pipes stdio, so the editor needs the terminal reopened.
+    let edited = process.run("sh", ["-c", editor_command(editor, tmp_path)])
+    let editor_ok = match edited {
+        Ok(r) => r.success()
+        Err(_) => false
+    }
+    if !editor_ok {
+        let _ = process.run("rm", ["-f", tmp_path])
         io.eprintln("Editor exited with error, aborting.")
         env.exit(1)
     }
 
-    let new_content = read_file(tmp_path)
-    process_run("rm", ["-f", tmp_path])
+    let read_back = fs.read(tmp_path)
+    let _ = process.run("rm", ["-f", tmp_path])
+    if read_back.is_err() {
+        io.eprintln("Cannot read {tmp_path}: {read_back.unwrap_err()}")
+        env.exit(1)
+    }
+    let new_content = read_back.unwrap()
 
     if new_content.trim() == content.trim() {
         io.println("Nothing changed.")
@@ -1490,7 +1528,7 @@ pub fn cmd_vi(id_prefix: Str) ! DB.Read, DB.Write {
     io.println("Updated {sid}: {changes.join(", ")}")
 }
 
-pub fn cmd_install() {
+pub fn cmd_install() ! Env.Read, Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint, Process.Spawn {
     let home = env.var("HOME") ?? "/tmp"
     let commands_dir = "{home}/.claude/commands"
     let skills_dir = "{home}/.claude/skills"
@@ -1510,21 +1548,28 @@ pub fn cmd_install() {
         let content = contents.get(i) ?? ""
 
         let legacy_cmd = path_join(commands_dir, "br:{name}.md")
-        if file_exists(legacy_cmd) == 1 {
-            process_run("rm", ["-f", legacy_cmd])
+        if path_exists(legacy_cmd) {
+            let _ = process.run("rm", ["-f", legacy_cmd])
         }
 
         let skill_dir = path_join(skills_dir, "br:{name}")
-        if file_exists(skill_dir) == 1 {
-            process_run("rm", ["-rf", skill_dir])
+        if path_exists(skill_dir) {
+            let _ = process.run("rm", ["-rf", skill_dir])
         }
 
-        let result = process_run("mkdir", ["-p", skill_dir])
-        if result.exit_code != 0 {
-            io.eprintln("Failed to create {skill_dir}")
-            env.exit(1)
+        match process.run("mkdir", ["-p", skill_dir]) {
+            Ok(result) => {
+                if !result.success() {
+                    io.eprintln("Failed to create {skill_dir}")
+                    env.exit(1)
+                }
+            }
+            Err(e) => {
+                io.eprintln("Failed to create {skill_dir}: {e}")
+                env.exit(1)
+            }
         }
-        write_file(path_join(skill_dir, "SKILL.md"), content)
+        write_or_exit(path_join(skill_dir, "SKILL.md"), content)
         io.println("  Installed: br:{name}")
         i = i + 1
     }
@@ -1534,35 +1579,35 @@ pub fn cmd_install() {
     install_hook(home)
 }
 
-fn install_bridge_md(home: Str) {
+fn install_bridge_md(home: Str) ! Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint {
     const BRIDGE_MD = #embed("../commands/bridge.md")
     let bridge_path = "{home}/.claude/bridge.md"
-    write_file(bridge_path, BRIDGE_MD)
+    write_or_exit(bridge_path, BRIDGE_MD)
     io.println("  Installed: bridge.md")
 
     let claude_md_path = "{home}/.claude/CLAUDE.md"
-    if file_exists(claude_md_path) == 1 {
-        let content = read_file(claude_md_path)
+    if path_exists(claude_md_path) {
+        let content = read_or_exit(claude_md_path)
         if !content.contains("@bridge.md") {
-            write_file(claude_md_path, "{content}\n@bridge.md")
+            write_or_exit(claude_md_path, "{content}\n@bridge.md")
             io.println("  Added @bridge.md to CLAUDE.md")
         } else {
             io.println("  CLAUDE.md: @bridge.md already present")
         }
     } else {
-        write_file(claude_md_path, "@bridge.md\n")
+        write_or_exit(claude_md_path, "@bridge.md\n")
         io.println("  Created CLAUDE.md with @bridge.md")
     }
 }
 
-fn install_hook(home: Str) {
+fn install_hook(home: Str) ! Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint {
     let settings_path = "{home}/.claude/settings.json"
     let hook_cmd = #"bash -c 'read input; sid=$(echo "$input" | sed -n '"'"'s/.*"session_id":"\([^"]*\)".*/\1/p'"'"'); [ -n "$CLAUDE_ENV_FILE" ] && [ -n "$sid" ] && echo "export BR_SESSION_ID=$sid" >> "$CLAUDE_ENV_FILE"'"#
 
     json_clear()
     let mut root = -1
-    if file_exists(settings_path) == 1 {
-        let content = read_file(settings_path)
+    if path_exists(settings_path) {
+        let content = read_or_exit(settings_path)
         if !content.trim().is_empty() {
             root = json_parse(content)
         }
@@ -1622,11 +1667,11 @@ fn install_hook(home: Str) {
 
     json_push(ss_arr, entry)
 
-    write_file(settings_path, json_encode(root))
+    write_or_exit(settings_path, json_encode(root))
     io.println("  Hook: SessionStart (BR_SESSION_ID)")
 }
 
-pub fn cmd_uninstall() {
+pub fn cmd_uninstall() ! Env.Read, Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint, Process.Spawn {
     let home = env.var("HOME") ?? "/tmp"
     let commands_dir = "{home}/.claude/commands"
     let skills_dir = "{home}/.claude/skills"
@@ -1636,14 +1681,14 @@ pub fn cmd_uninstall() {
         let mut found = false
 
         let legacy_cmd = path_join(commands_dir, "br:{name}.md")
-        if file_exists(legacy_cmd) == 1 {
-            process_run("rm", ["-f", legacy_cmd])
+        if path_exists(legacy_cmd) {
+            let _ = process.run("rm", ["-f", legacy_cmd])
             found = true
         }
 
         let skill_dir = path_join(skills_dir, "br:{name}")
-        if file_exists(skill_dir) == 1 {
-            process_run("rm", ["-rf", skill_dir])
+        if path_exists(skill_dir) {
+            let _ = process.run("rm", ["-rf", skill_dir])
             found = true
         }
 
@@ -1662,31 +1707,31 @@ pub fn cmd_uninstall() {
     uninstall_hook(home)
 }
 
-fn uninstall_bridge_md(home: Str) {
+fn uninstall_bridge_md(home: Str) ! Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint, Process.Spawn {
     let bridge_path = "{home}/.claude/bridge.md"
-    if file_exists(bridge_path) == 1 {
-        process_run("rm", ["-f", bridge_path])
+    if path_exists(bridge_path) {
+        let _ = process.run("rm", ["-f", bridge_path])
         io.println("  Removed: bridge.md")
     }
 
     let claude_md_path = "{home}/.claude/CLAUDE.md"
-    if file_exists(claude_md_path) == 1 {
-        let content = read_file(claude_md_path)
+    if path_exists(claude_md_path) {
+        let content = read_or_exit(claude_md_path)
         if content.contains("@bridge.md") {
             let updated = content.replace("\n@bridge.md", "").replace("@bridge.md\n", "")
-            write_file(claude_md_path, updated)
+            write_or_exit(claude_md_path, updated)
             io.println("  Removed @bridge.md from CLAUDE.md")
         }
     }
 }
 
-fn uninstall_hook(home: Str) {
+fn uninstall_hook(home: Str) ! Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint {
     let settings_path = "{home}/.claude/settings.json"
-    if file_exists(settings_path) == 0 {
+    if !path_exists(settings_path) {
         return
     }
 
-    let content = read_file(settings_path)
+    let content = read_or_exit(settings_path)
     if content.trim().is_empty() {
         return
     }
@@ -1738,7 +1783,7 @@ fn uninstall_hook(home: Str) {
 
     if removed {
         json_set(hooks_node, "SessionStart", new_arr)
-        write_file(settings_path, json_encode(root))
+        write_or_exit(settings_path, json_encode(root))
         io.println("  Removed: SessionStart hook")
     }
 }

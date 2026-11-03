@@ -1,13 +1,25 @@
 import std.db
+import std.fs.{FileKind}
 
-pub fn db_path() -> Str {
+pub fn db_path() -> Str ! Env.Read, Env.Exit, FS.Read, IO.Eprint, Process.Spawn {
     let home = env.var("HOME") ?? "/tmp"
     let dir = "{home}/.local/share/bridge"
-    if is_dir(dir) == 0 {
-        let result = process_run("mkdir", ["-p", dir])
-        if result.exit_code != 0 {
-            io.eprintln("Failed to create data directory: {result.err_out}")
-            env.exit(1)
+    let is_dir = match fs.stat(dir) {
+        Ok(info) => info.kind == FileKind.Dir
+        Err(_) => false
+    }
+    if !is_dir {
+        match process.run("mkdir", ["-p", dir]) {
+            Ok(result) => {
+                if !result.success() {
+                    io.eprintln("Failed to create data directory: {result.err_out}")
+                    env.exit(1)
+                }
+            }
+            Err(e) => {
+                io.eprintln("Failed to create data directory: {e}")
+                env.exit(1)
+            }
         }
     }
     "{dir}/bridge.db"

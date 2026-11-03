@@ -1,4 +1,4 @@
-import commands.{parse_vi_content, try_validate_edit_fields, diff_tags, vi_tmp_path, shell_quote}
+import commands.{parse_vi_content, try_validate_edit_fields, diff_tags, vi_tmp_path, shell_quote, editor_command}
 
 // --- parse_vi_content ---
 
@@ -196,4 +196,10 @@ test "parse_vi_content splits header and body with non-ASCII text" {
     assert_eq(parsed.title, "Café ☕ résumé")
     assert_eq(parsed.priority, 2)
     assert_eq(parsed.desc, "Déscription ☕ here")
+}
+
+// --- editor_command ---
+
+test "editor_command reopens the terminal and quotes the path" {
+    assert_eq(editor_command("vim -u NONE", "/tmp/o'Brien dir/f.txt"), "vim -u NONE '/tmp/o'\\''Brien dir/f.txt' </dev/tty >/dev/tty 2>/dev/tty")
 }
