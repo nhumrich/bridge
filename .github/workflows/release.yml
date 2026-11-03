@@ -12,7 +12,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/blinklang/blink:0.53.1
+      image: ghcr.io/blinklang/blink:0.60.0
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +28,7 @@ jobs:
         run: |
           cd dist
           rm -f br-*.c
+          rm -rf br-*.units
           sha256sum br-* > checksums.txt
 
       - uses: softprops/action-gh-release@v2

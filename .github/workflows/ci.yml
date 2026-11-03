@@ -7,7 +7,7 @@ on:
 
 env:
   # Keep in sync with blink-version in blink.toml.
-  BLINK_VERSION: v0.53.1
+  BLINK_VERSION: v0.60.0
 
 jobs:
   test:
