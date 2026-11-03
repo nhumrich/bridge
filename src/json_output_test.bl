@@ -1,5 +1,5 @@
 import std.db
-import db.{init_db}
+import store.{init_db}
 import commands.{cmd_ls, cmd_ready, cmd_blocked, cmd_project_ls, cmd_show, cmd_project_show, cmd_edit}
 import std.testing.{capture_print}
 import std.json.{json_parse, json_type, json_get, json_at, json_len, json_as_str, json_as_int, json_as_bool, json_clear, JSON_ARRAY, JSON_BOOL, JSON_INT}

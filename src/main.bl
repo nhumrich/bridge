@@ -1,6 +1,6 @@
 import std.args.{ArgParser, Args, argparser_new, set_version, add_flag, add_command, command_add_positional, command_add_option, command_add_flag, argparse, args_error, args_command, args_has, args_get, args_get_all, args_positional, args_positional_count, generate_help, generate_command_help}
 import std.db
-import db.{db_path, init_db}
+import store.{db_path, init_db}
 import argcheck.{try_validate_positional_count}
 import commands.{cmd_add, cmd_ls, cmd_ready, cmd_show, cmd_note, cmd_edit, cmd_vi, cmd_transition_batch, cmd_rm_batch, cmd_dep_add, cmd_dep_rm, cmd_blocked, cmd_tag, cmd_untag, cmd_tags, cmd_stats, cmd_install, cmd_uninstall, cmd_graph, cmd_project_add, cmd_project_ls, cmd_project_show, cmd_project_edit, cmd_project_rm, cmd_project_tag, cmd_project_untag}
 

@@ -1,5 +1,5 @@
 import std.db
-import db.{init_db}
+import store.{init_db}
 import commands.{try_resolve_project_id, try_project_name_available, try_project_name_available_excluding}
 
 fn setup_test_db() ! DB.Read, DB.Write {
