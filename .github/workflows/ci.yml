@@ -5,29 +5,15 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  # Keep in sync with blink-version in blink.toml and the image tag in release.yml.
-  BLINK_VERSION: v0.60.0
-
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    container:
+      # Keep in sync with blink-version in blink.toml and the image tag in release.yml.
+      image: ghcr.io/blinklang/blink:0.60.0
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Blink
-        run: |
-          curl -fsSL -o /tmp/blink.tar.gz \
-            "https://github.com/blinklang/blink/releases/download/${BLINK_VERSION}/blink-linux-x86_64.tar.gz"
-          tar xzf /tmp/blink.tar.gz -C /tmp
-          sudo cp /tmp/blink-linux-x86_64/bin/blink /usr/local/bin/
-          sudo mkdir -p /usr/local/share/blink
-          sudo cp -r /tmp/blink-linux-x86_64/share/blink/. /usr/local/share/blink/
-          blink --version
-
-      - name: Install build deps
-        run: sudo apt-get update && sudo apt-get install -y libgc-dev
 
       - name: Check
         run: blink check src/main.bl
