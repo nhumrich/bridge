@@ -6,18 +6,16 @@ on:
   pull_request:
 
 env:
-  # Keep in sync with blink-version in blink.toml.
+  # Keep in sync with blink-version in blink.toml and the image tag in release.yml.
   BLINK_VERSION: v0.60.0
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      # Installed from the release tarball rather than ghcr.io/blinklang/blink,
-      # because that image ships libblink_std.a without its .archive-id stamp and
-      # every `blink build` there fails with IncompatibleStdlibArchive.
       - name: Install Blink
         run: |
           curl -fsSL -o /tmp/blink.tar.gz \
