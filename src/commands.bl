@@ -1,7 +1,7 @@
 import std.db
 import std.db_row
-import taskid.{generate_id, is_valid_id}
-import display.{short_id, format_priority, format_task_line, format_task_detail, format_activity_line, format_note_line, format_project_line}
+import taskid.{generate_id, is_valid_id, display_id, strip_id_prefix}
+import display.{short_id, shown_id, format_priority, format_task_line, format_task_detail, format_activity_line, format_note_line, format_project_line}
 import std.json.{json_new_array, json_new_object, json_set, json_new_str, json_new_int, json_new_bool, json_push, json_encode, json_clear, json_parse, json_get, json_as_str, json_at, json_len}
 import std.path.{path_join}
 
@@ -117,10 +117,11 @@ pub fn build_project_tag_clauses(tag_filters: List[Str]) -> List[Str] {
 // The exit-free core of resolve_id, so the no-match and ambiguous paths are
 // reachable from tests: exit(1) would kill the whole test binary.
 pub fn try_resolve_id(prefix: Str) -> Result[Str, Str] ! DB.Read {
-    if prefix == "" {
+    let bare = strip_id_prefix(prefix)
+    if bare == "" {
         return Err("No task matches prefix: {prefix}")
     }
-    let pattern = "{escape_like_pattern(prefix.to_lower())}%"
+    let pattern = "{escape_like_pattern(bare.to_lower())}%"
     let rows = db.query("SELECT id FROM tasks WHERE id LIKE {pattern} ESCAPE '!'").unwrap()
     if rows.is_empty() {
         return Err("No task matches prefix: {prefix}")
@@ -144,8 +145,15 @@ pub fn try_resolve_project_id(ref: Str) -> Result[Str, Str] ! DB.Read {
     // Only the LIKE arm is escaped; `name = {ref} COLLATE NOCASE` is exact equality
     // modulo case, and escaping it would break projects whose names legitimately
     // contain % or _.
-    let pattern = "{escape_like_pattern(ref.to_lower())}%"
-    let rows = db.query("SELECT id FROM projects WHERE name = {ref} COLLATE NOCASE OR id LIKE {pattern} ESCAPE '!'").unwrap()
+    // The name arm keeps the original text so a project named `br-foo` still resolves.
+    // An empty stripped value (`br-`) skips the id arm: `LIKE '%'` would match everything.
+    let bare = strip_id_prefix(ref)
+    let rows = if bare.is_empty() {
+        db.query("SELECT id FROM projects WHERE name = {ref} COLLATE NOCASE").unwrap()
+    } else {
+        let pattern = "{escape_like_pattern(bare.to_lower())}%"
+        db.query("SELECT id FROM projects WHERE name = {ref} COLLATE NOCASE OR id LIKE {pattern} ESCAPE '!'").unwrap()
+    }
     if rows.is_empty() {
         return Err("No project matches: {ref}")
     }
@@ -258,23 +266,20 @@ fn print_task_rows(task_rows: List[TaskRow], show_project: Bool) ! Env.Read, IO.
     }
 }
 
-// Post-process a GROUP_CONCAT CSV column into a JSON array of strings. Only
-// safe for blocker ids (generate_id() Crockford32, which cannot contain a
-// comma) — tag values are user-supplied and may themselves contain a comma,
-// which this would wrongly split into extra elements, so tag paths query the
-// real List[Str] instead (tags_list_for_task / project_tags_list).
-fn csv_to_json_array(csv: Str) -> Int {
-    let arr = json_new_array()
-    if csv.is_empty() {
-        return arr
-    }
+// Split a GROUP_CONCAT CSV column of blocker ids into display form. Only safe
+// for blocker ids (generate_id() Crockford32, which cannot contain a comma) —
+// tag values are user-supplied and may themselves contain a comma, which this
+// would wrongly split into extra elements, so tag paths query the real List[Str]
+// instead (tags_list_for_task / project_tags_list).
+fn blocker_display_ids(csv: Str) -> List[Str] {
+    let mut out: List[Str] = []
     for part in csv.split(",") {
         let t = part.trim()
         if !t.is_empty() {
-            json_push(arr, json_new_str(t))
+            out.push(display_id(t))
         }
     }
-    arr
+    out
 }
 
 fn str_list_to_json_array(items: List[Str]) -> Int {
@@ -289,7 +294,7 @@ fn str_list_to_json_array(items: List[Str]) -> Int {
 // (is_blocked for ls, blockers for blocked) before the trailing "project" key.
 fn task_json_base(t: TaskRow) -> Int ! DB.Read {
     let obj = json_new_object()
-    json_set(obj, "id", json_new_str(t.id))
+    json_set(obj, "id", json_new_str(display_id(t.id)))
     json_set(obj, "title", json_new_str(t.title))
     json_set(obj, "priority", json_new_int(t.priority))
     json_set(obj, "status", json_new_str(t.status))
@@ -328,7 +333,7 @@ fn blocked_rows_to_json(rows: List[db_row.Row]) -> Str ! DB.Read {
         let t = parse_task_row(row, 6)
         let blockers = row.get_at(5) ?? ""
         let obj = task_json_base(t)
-        json_set(obj, "blockers", csv_to_json_array(blockers))
+        json_set(obj, "blockers", str_list_to_json_array(blocker_display_ids(blockers)))
         json_set(obj, "project", json_new_str(t.project))
         json_push(arr, obj)
     }
@@ -349,7 +354,7 @@ pub fn cmd_note(id_prefix: Str, content: Str) ! Env.Read, Env.Exit, IO.Print, IO
     let session_id = env.var("BR_SESSION_ID") ?? ""
     let source = if session_id.is_empty() { "user" } else { "agent" }
     db.exec("INSERT INTO task_notes (task_id, content, source, session_id, project_path) VALUES ({id}, {content}, {source}, {session_id}, {project_path})").unwrap()
-    io.println("Note added to {short_id(id)}")
+    io.println("Note added to {shown_id(id)}")
 }
 
 pub fn try_check_title_len(title: Str) -> Result[Str, Str] {
@@ -422,7 +427,7 @@ pub fn cmd_add(title: Str, description: Str, priority: Int, priority_explicit: B
     }
 
     log_activity(id, "created", session_id)
-    io.println("Created: {short_id(id)}  {title}")
+    io.println("Created: {shown_id(id)}  {title}")
     let plabel = format_priority(priority)
     if priority_explicit {
         io.println("Priority: {plabel}")
@@ -510,13 +515,13 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Print,
     let blocks_rows = db.query("SELECT blocked_id FROM deps WHERE blocker_id = {id}").unwrap()
     let mut blocks_list: List[Str] = []
     for br in blocks_rows {
-        blocks_list.push(short_id(br.get_at(0) ?? ""))
+        blocks_list.push(shown_id(br.get_at(0) ?? ""))
     }
 
     let blocked_by_rows = db.query("SELECT blocker_id FROM deps WHERE blocked_id = {id}").unwrap()
     let mut depends_on_list: List[Str] = []
     for bbr in blocked_by_rows {
-        depends_on_list.push(short_id(bbr.get_at(0) ?? ""))
+        depends_on_list.push(shown_id(bbr.get_at(0) ?? ""))
     }
 
     let unresolved = db.query("SELECT 1 FROM deps d JOIN tasks blocker ON blocker.id = d.blocker_id WHERE d.blocked_id = {id} AND blocker.status NOT IN ('done', 'cancelled') LIMIT 1").unwrap()
@@ -527,7 +532,7 @@ pub fn cmd_show(id_prefix: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Print,
 
     if json_mode {
         let obj = json_new_object()
-        json_set(obj, "id", json_new_str(id))
+        json_set(obj, "id", json_new_str(display_id(id)))
         json_set(obj, "title", json_new_str(title))
         json_set(obj, "description", json_new_str(description))
         json_set(obj, "status", json_new_str(status))
@@ -640,7 +645,7 @@ fn edit_task(id: Str, title: Str, description: Str, priority: Int, status: Str, 
     }
     db.exec("UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
     db.commit().unwrap()
-    io.println("Updated: {short_id(id)}")
+    io.println("Updated: {shown_id(id)}")
 }
 
 pub fn cmd_edit(id_prefix: Str, title: Str, description: Str, priority: Int, status: Str, project_ref: Str, clear_project: Bool, append: Bool) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
@@ -680,7 +685,7 @@ pub fn cmd_rm(id_prefix: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write
 // Best-effort: every id prefix is attempted regardless of earlier failures, so
 // a bad id in the middle of `br close a b c` doesn't stop b/c from being
 // processed. edit_task already commits per id (see its db.begin()/db.commit()
-// pair above) and prints "Updated: {short_id}" per call, so partial progress
+// pair above) and prints an "Updated:" line per call, so partial progress
 // persists correctly even when a later id fails to resolve.
 
 pub fn run_transition_batch(id_prefixes: List[Str], status: Str, action: Str, session_id: Str) -> Int ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
@@ -729,7 +734,7 @@ pub fn cmd_rm_batch(id_prefixes: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.
         if !seen.contains(id) {
             seen.insert(id)
             db.exec("DELETE FROM tasks WHERE id = {id}").unwrap()
-            io.println("Deleted: {short_id(id)}")
+            io.println("Deleted: {shown_id(id)}")
         }
     }
     if failures > 0 {
@@ -766,7 +771,7 @@ pub fn cmd_project_add(name: Str, description: Str, tag_list: List[Str]) ! Env.E
         db.exec("INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES ({id}, {tag})").unwrap()
     }
 
-    io.println("Created project: {short_id(id)}  {name}")
+    io.println("Created project: {shown_id(id)}  {name}")
 }
 
 pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) ! Env.Read, IO.Print, DB.Read {
@@ -781,7 +786,7 @@ pub fn cmd_project_ls(json_mode: Bool, tag_filters: List[Str]) ! Env.Read, IO.Pr
         let arr = json_new_array()
         for row in rows {
             let obj = json_new_object()
-            json_set(obj, "id", json_new_str(row.get_at(0) ?? ""))
+            json_set(obj, "id", json_new_str(display_id(row.get_at(0) ?? "")))
             json_set(obj, "name", json_new_str(row.get_at(1) ?? ""))
             json_set(obj, "status", json_new_str(row.get_at(2) ?? ""))
             json_set(obj, "done", json_new_int((row.get_at(3) ?? "0").to_int()))
@@ -833,7 +838,7 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Prin
 
     if json_mode {
         let obj = json_new_object()
-        json_set(obj, "id", json_new_str(id))
+        json_set(obj, "id", json_new_str(display_id(id)))
         json_set(obj, "name", json_new_str(name))
         json_set(obj, "description", json_new_str(description))
         json_set(obj, "status", json_new_str(status))
@@ -852,8 +857,8 @@ pub fn cmd_project_show(ref: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Prin
         return
     }
 
-    io.println("Project: {short_id(id)}")
-    io.println("  Full ID:  {id}")
+    io.println("Project: {shown_id(id)}")
+    io.println("  Full ID:  {display_id(id)}")
     io.println("  Name:     {name}")
     io.println("  Status:   {status}")
     io.println("  Progress: {done}/{total}")
@@ -907,13 +912,13 @@ pub fn cmd_project_edit(ref: Str, name: Str, description: Str, status: Str) ! En
     }
     db.exec("UPDATE projects SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = {id}").unwrap()
     db.commit().unwrap()
-    io.println("Updated project: {short_id(id)}")
+    io.println("Updated project: {shown_id(id)}")
 }
 
 pub fn cmd_project_rm(ref: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let id = resolve_project_id(ref)
     db.exec("DELETE FROM projects WHERE id = {id}").unwrap()
-    io.println("Deleted project: {short_id(id)}")
+    io.println("Deleted project: {shown_id(id)}")
 }
 
 pub fn cmd_project_tag(ref: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
@@ -921,7 +926,7 @@ pub fn cmd_project_tag(ref: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprin
     for tag in tags {
         db.exec("INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES ({id}, {tag})").unwrap()
     }
-    io.println("Tagged project: {short_id(id)}")
+    io.println("Tagged project: {shown_id(id)}")
 }
 
 pub fn cmd_project_untag(ref: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
@@ -929,7 +934,7 @@ pub fn cmd_project_untag(ref: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Epr
     for tag in tags {
         db.exec("DELETE FROM project_tags WHERE project_id = {id} AND tag = {tag}").unwrap()
     }
-    io.println("Untagged project: {short_id(id)}")
+    io.println("Untagged project: {shown_id(id)}")
 }
 
 // --- DAG Commands ---
@@ -1009,14 +1014,14 @@ pub fn cmd_dep_add(blocker_prefix: Str, blocked_prefix: Str) ! Env.Exit, IO.Prin
     }
 
     db.exec("INSERT OR IGNORE INTO deps (blocker_id, blocked_id) VALUES ({blocker_id}, {blocked_id})").unwrap()
-    io.println("Added: {short_id(blocker_id)} blocks {short_id(blocked_id)}")
+    io.println("Added: {shown_id(blocker_id)} blocks {shown_id(blocked_id)}")
 }
 
 pub fn cmd_dep_rm(blocker_prefix: Str, blocked_prefix: Str) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
     let blocker_id = resolve_id(blocker_prefix)
     let blocked_id = resolve_id(blocked_prefix)
     db.exec("DELETE FROM deps WHERE blocker_id = {blocker_id} AND blocked_id = {blocked_id}").unwrap()
-    io.println("Removed: {short_id(blocker_id)} no longer blocks {short_id(blocked_id)}")
+    io.println("Removed: {shown_id(blocker_id)} no longer blocks {shown_id(blocked_id)}")
 }
 
 pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) ! Env.Read, Env.Exit, IO.Print, IO.Eprint, DB.Read {
@@ -1044,7 +1049,7 @@ pub fn cmd_blocked(tag_filters: List[Str], project_ref: Str, json_mode: Bool) ! 
     let show_project = project_ref.is_empty()
     for row in rows {
         let t = parse_task_row(row, 6)
-        let blockers = row.get_at(5) ?? ""
+        let blockers = blocker_display_ids(row.get_at(5) ?? "").join(",")
         let proj = gated_project(t.project, show_project)
         let line = format_task_line(t.id, t.title, t.priority, t.status, t.tags, true, proj)
         io.println("{line}  (blocked by: {blockers})")
@@ -1222,7 +1227,7 @@ pub fn cmd_tag(id_prefix: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprint,
     for tag in tags {
         db.exec("INSERT OR IGNORE INTO tags (task_id, tag) VALUES ({id}, {tag})").unwrap()
     }
-    io.println("Tagged: {short_id(id)}")
+    io.println("Tagged: {shown_id(id)}")
 }
 
 pub fn cmd_untag(id_prefix: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprint, DB.Read, DB.Write {
@@ -1230,7 +1235,7 @@ pub fn cmd_untag(id_prefix: Str, tags: List[Str]) ! Env.Exit, IO.Print, IO.Eprin
     for tag in tags {
         db.exec("DELETE FROM tags WHERE task_id = {id} AND tag = {tag}").unwrap()
     }
-    io.println("Untagged: {short_id(id)}")
+    io.println("Untagged: {shown_id(id)}")
 }
 
 pub fn cmd_tags() ! IO.Print, DB.Read {
@@ -1415,7 +1420,7 @@ pub fn cmd_vi(id_prefix: Str) ! Env.Read, Env.Exit, FS.Read, FS.Write, IO.Print,
     let old_tags_str = old_tags.join(", ")
 
     let mut lines: List[Str] = []
-    lines.push("# Edit task {sid}. Lines starting with # are ignored.")
+    lines.push("# Edit task {shown_id(id)}. Lines starting with # are ignored.")
     lines.push("# Fields: title, priority (P0-P4), status (open/in_progress/done/cancelled), tags (comma-separated)")
     lines.push("# Everything below --- is the description (freeform).")
     lines.push("title: {old_title}")
@@ -1525,7 +1530,7 @@ pub fn cmd_vi(id_prefix: Str) ! Env.Read, Env.Exit, FS.Read, FS.Write, IO.Print,
     db.commit().unwrap()
 
     log_activity(id, "edited", "")
-    io.println("Updated {sid}: {changes.join(", ")}")
+    io.println("Updated {shown_id(id)}: {changes.join(", ")}")
 }
 
 pub fn cmd_install() ! Env.Read, Env.Exit, FS.Read, FS.Write, IO.Print, IO.Eprint, Process.Spawn {

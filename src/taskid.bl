@@ -87,3 +87,16 @@ pub fn is_valid_id(s: Str) -> Bool {
     }
     true
 }
+
+pub fn display_id(id: Str) -> Str {
+    "br-{id}"
+}
+
+// Case-insensitive so `BR-ABC` works, but only the dash form is a prefix:
+// a bare id may itself start with "br" (e.g. brd261).
+pub fn strip_id_prefix(input: Str) -> Str {
+    if input.len() >= 3 && input.substring(0, 3).to_lower() == "br-" {
+        return input.substring(3, input.len())
+    }
+    input
+}

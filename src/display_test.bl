@@ -1,4 +1,12 @@
-import display.{short_id, format_priority, format_status, format_task_line}
+import display.{short_id, shown_id, format_priority, format_status, format_task_line, format_task_detail, format_project_line}
+
+test "shown_id prefixes a short id" {
+    assert_eq(shown_id("abc123"), "br-abc123")
+}
+
+test "shown_id truncates before it adds the prefix" {
+    assert_eq(shown_id("01ABCDEF99XYZWWW"), "br-01ABCDEF")
+}
 
 test "short_id truncates long ids" {
     assert_eq(short_id("01ABCDEF99XYZWWW"), "01ABCDEF")
@@ -71,12 +79,12 @@ test "format_status blocked done still shows done" {
 
 test "format_task_line basic with tags" {
     let result = format_task_line("01ABCDEF99XYZWWW", "Fix the thing", 1, "open", "bug,urgent", false, "")
-    assert_eq(result, "[ ] 01ABCDEF  P1  Fix the thing [bug,urgent]")
+    assert_eq(result, "[ ] br-01ABCDEF  P1  Fix the thing [bug,urgent]")
 }
 
 test "format_task_line no tags" {
     let result = format_task_line("01ABCDEF99XYZWWW", "Fix the thing", 2, "done", "", false, "")
-    assert_eq(result, "[x] 01ABCDEF  P2  Fix the thing")
+    assert_eq(result, "[x] br-01ABCDEF  P2  Fix the thing")
 }
 
 test "format_task_line truncates long title" {
@@ -88,20 +96,42 @@ test "format_task_line truncates long title" {
 
 test "format_task_line sanitizes newlines and tabs" {
     let result = format_task_line("01ABCDEF99", "line1\nline2\ttab", 3, "in_progress", "", false, "")
-    assert_eq(result, "[~] 01ABCDEF  P3  line1 line2 tab")
+    assert_eq(result, "[~] br-01ABCDEF  P3  line1 line2 tab")
 }
 
 test "format_task_line blocked shows bang glyph" {
     let result = format_task_line("01ABCDEF99", "Waiting on dep", 2, "open", "", true, "")
-    assert_eq(result, "[!] 01ABCDEF  P2  Waiting on dep")
+    assert_eq(result, "[!] br-01ABCDEF  P2  Waiting on dep")
 }
 
 test "format_task_line shows project between title and tags" {
     let result = format_task_line("01ABCDEF99", "Fix parser", 2, "open", "urgent", false, "bridge")
-    assert_eq(result, "[ ] 01ABCDEF  P2  Fix parser  (bridge) [urgent]")
+    assert_eq(result, "[ ] br-01ABCDEF  P2  Fix parser  (bridge) [urgent]")
 }
 
 test "format_task_line empty project renders unchanged" {
     let result = format_task_line("01ABCDEF99", "Fix parser", 2, "open", "urgent", false, "")
-    assert_eq(result, "[ ] 01ABCDEF  P2  Fix parser [urgent]")
+    assert_eq(result, "[ ] br-01ABCDEF  P2  Fix parser [urgent]")
+}
+
+test "format_task_line shows the br- prefix on a short id" {
+    let result = format_task_line("abc123", "T", 2, "open", "", false, "")
+    assert_eq(result, "[ ] br-abc123  P2  T")
+}
+
+test "format_task_detail prefixes both id lines" {
+    let result = format_task_detail("abc123", "T", "", "open", 2, "c", "u", "", "", "", "", "", false)
+    assert(result.contains("Task: br-abc123"))
+    assert(result.contains("  Full ID:  br-abc123"))
+}
+
+test "format_task_detail keeps short_id on the short line for an old long id" {
+    let result = format_task_detail("01ABCDEF99XYZWWW", "T", "", "open", 2, "c", "u", "", "", "", "", "", false)
+    assert(result.contains("Task: br-01ABCDEF\n"))
+    assert(result.contains("  Full ID:  br-01ABCDEF99XYZWWW"))
+}
+
+test "format_project_line prefixes the id" {
+    let result = format_project_line("p1aaaa", "webapp", "active", 1, 2, "")
+    assert_eq(result, "br-p1aaaa  webapp  (1/2)  active")
 }

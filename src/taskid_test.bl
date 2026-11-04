@@ -1,4 +1,4 @@
-import taskid.{id_from_hex, id_from_seed, generate_id, is_valid_id, CROCKFORD}
+import taskid.{id_from_hex, id_from_seed, generate_id, is_valid_id, display_id, strip_id_prefix, CROCKFORD}
 
 test "id_from_hex returns 6 chars" {
     let id = id_from_hex("00112233445f")
@@ -56,4 +56,37 @@ test "is_valid_id rejects 5-char string" {
 
 test "is_valid_id rejects a string containing u" {
     assert(!is_valid_id("abcduf"))
+}
+
+test "display_id adds the br- prefix" {
+    assert_eq(display_id("abc123"), "br-abc123")
+}
+
+test "strip_id_prefix removes a leading br-" {
+    assert_eq(strip_id_prefix("br-abc123"), "abc123")
+}
+
+test "strip_id_prefix ignores case" {
+    assert_eq(strip_id_prefix("BR-ABC"), "ABC")
+    assert_eq(strip_id_prefix("Br-abc"), "abc")
+}
+
+test "strip_id_prefix keeps a bare id" {
+    assert_eq(strip_id_prefix("abc123"), "abc123")
+}
+
+test "strip_id_prefix keeps a bare id that starts with br" {
+    assert_eq(strip_id_prefix("brd261"), "brd261")
+}
+
+test "strip_id_prefix of the bare prefix gives empty" {
+    assert_eq(strip_id_prefix("br-"), "")
+}
+
+test "strip_id_prefix strips only one prefix" {
+    assert_eq(strip_id_prefix("br-br-abc"), "br-abc")
+}
+
+test "strip_id_prefix of empty string is empty" {
+    assert_eq(strip_id_prefix(""), "")
 }

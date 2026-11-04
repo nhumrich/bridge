@@ -72,7 +72,7 @@ test "cmd_ls json marks is_blocked true when blocked" {
         let mut found = false
         while i < json_len(root) {
             let obj = json_at(root, i)
-            if json_as_str(json_get(obj, "id")) == "BLOCKED1" {
+            if json_as_str(json_get(obj, "id")) == "br-BLOCKED1" {
                 found = true
                 assert_eq(json_as_bool(json_get(obj, "is_blocked")), 1)
             }
@@ -118,7 +118,7 @@ test "cmd_blocked json emits blockers array and project field" {
         let blockers_node = json_get(obj, "blockers")
         assert_eq(json_type(blockers_node), JSON_ARRAY)
         assert_eq(json_len(blockers_node), 1)
-        assert_eq(json_as_str(json_at(blockers_node, 0)), "BLOCKER1")
+        assert_eq(json_as_str(json_at(blockers_node, 0)), "br-BLOCKER1")
         assert_eq(json_as_str(json_get(obj, "project")), "launch")
         assert_eq(json_type(json_get(obj, "priority")), JSON_INT)
     }
@@ -193,7 +193,7 @@ test "cmd_project_show json includes done total and task is_blocked" {
         let mut found_blocked = false
         while i < json_len(tasks_node) {
             let t = json_at(tasks_node, i)
-            if json_as_str(json_get(t, "id")) == "BLOCKED1" {
+            if json_as_str(json_get(t, "id")) == "br-BLOCKED1" {
                 found_blocked = true
                 assert_eq(json_type(json_get(t, "is_blocked")), JSON_BOOL)
                 assert_eq(json_as_bool(json_get(t, "is_blocked")), 1)
@@ -346,5 +346,133 @@ test "cmd_edit with a description over 4000 bytes does not panic" {
         }
         let row = db.query_one("SELECT description FROM tasks WHERE id = 'TASK0001'").unwrap().unwrap()
         assert_eq((row.get_at(0) ?? "").len(), 5000)
+    }
+}
+
+test "cmd_ls json prefixes the task id with br-" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'T', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tags (task_id, tag) VALUES ('abc123', 'bug')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_ls("", [], "", true, false, false)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        let obj = json_at(root, 0)
+        assert_eq(json_as_str(json_get(obj, "id")), "br-abc123")
+        assert_eq(json_len(json_get(obj, "tags")), 1)
+    }
+}
+
+test "cmd_show json prefixes id, blocks and depends_on" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'A', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('def456', 'B', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('ghj789', 'C', 'open', 2)").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('abc123', 'def456')").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('def456', 'ghj789')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_show("def456", true)
+        }
+        json_clear()
+        let obj = json_parse(output.get(0) ?? "\{\}")
+        assert_eq(json_as_str(json_get(obj, "id")), "br-def456")
+        assert_eq(json_as_str(json_at(json_get(obj, "blocks"), 0)), "br-ghj789")
+        assert_eq(json_as_str(json_at(json_get(obj, "depends_on"), 0)), "br-abc123")
+    }
+}
+
+test "cmd_show accepts a br- prefixed id" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'A', 'open', 2)").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_show("br-abc", true)
+        }
+        json_clear()
+        let obj = json_parse(output.get(0) ?? "\{\}")
+        assert_eq(json_as_str(json_get(obj, "id")), "br-abc123")
+    }
+}
+
+test "cmd_project_ls json prefixes the project id and keeps its tags" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'launch')").unwrap()
+        db.exec("INSERT INTO project_tags (project_id, tag) VALUES ('p1aaaa', 'x')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_ls(true, [])
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        let obj = json_at(root, 0)
+        assert_eq(json_as_str(json_get(obj, "id")), "br-p1aaaa")
+        assert_eq(json_len(json_get(obj, "tags")), 1)
+    }
+}
+
+test "cmd_project_show json prefixes the project id and nested task ids" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'launch')").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority, project_id) VALUES ('abc123', 'T', 'open', 2, 'p1aaaa')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_project_show("br-p1a", true)
+        }
+        json_clear()
+        let obj = json_parse(output.get(0) ?? "\{\}")
+        assert_eq(json_as_str(json_get(obj, "id")), "br-p1aaaa")
+        assert_eq(json_as_str(json_get(json_at(json_get(obj, "tasks"), 0), "id")), "br-abc123")
+    }
+}
+
+test "cmd_blocked text prefixes every blocker id" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('aaa111', 'A', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('bbb222', 'B', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('ccc333', 'C', 'open', 2)").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('aaa111', 'ccc333')").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('bbb222', 'ccc333')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_blocked([], "", false)
+        }
+        let text = output.join("\n")
+        assert(text.contains("br-ccc333"))
+        assert(text.contains("br-aaa111"))
+        assert(text.contains("br-bbb222"))
+        assert(!text.contains(" aaa111"))
+        assert(!text.contains(" bbb222"))
+    }
+}
+
+test "cmd_blocked json prefixes every blocker id" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('aaa111', 'A', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('bbb222', 'B', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('ccc333', 'C', 'open', 2)").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('aaa111', 'ccc333')").unwrap()
+        db.exec("INSERT INTO deps (blocker_id, blocked_id) VALUES ('bbb222', 'ccc333')").unwrap()
+        let mut output: List[Str] = []
+        with capture_print(output) {
+            cmd_blocked([], "", true)
+        }
+        json_clear()
+        let root = json_parse(output.get(0) ?? "[]")
+        let obj = json_at(root, 0)
+        assert_eq(json_as_str(json_get(obj, "id")), "br-ccc333")
+        let blockers_node = json_get(obj, "blockers")
+        assert_eq(json_len(blockers_node), 2)
+        assert(json_as_str(json_at(blockers_node, 0)).starts_with("br-"))
+        assert(json_as_str(json_at(blockers_node, 1)).starts_with("br-"))
     }
 }

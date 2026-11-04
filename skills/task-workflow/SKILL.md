@@ -39,7 +39,7 @@ br stats                                               # Task counts by status
 
 ## Conventions
 
-- **IDs**: 6-char Crockford base32 random ids — match on any unique prefix.
+- **IDs**: `br` shows IDs as `br-abc123` (6-char Crockford base32 random ID). Input takes `br-abc123`, `br-abc`, or a bare prefix like `abc`, if the prefix is unique.
 - **Priorities**: P0 (critical) → P4 (lowest). Default P2.
 - **Tags**: `namespace:value` convention. Auto-tags `repo:<name>` on add.
 - **Statuses**: open → in_progress → done/cancelled

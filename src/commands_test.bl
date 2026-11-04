@@ -892,3 +892,118 @@ test "generate_unique_task_id returns a valid, unused id" {
         assert(!is_task_id_taken(id))
     }
 }
+
+test "try_resolve_id accepts the br- prefix" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Ok("abc123")
+        assert_eq(try_resolve_id("br-abc"), expected)
+        assert_eq(try_resolve_id("br-abc123"), expected)
+    }
+}
+
+test "try_resolve_id accepts an uppercase BR- prefix" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Ok("abc123")
+        assert_eq(try_resolve_id("BR-ABC"), expected)
+    }
+}
+
+test "try_resolve_id still accepts a bare prefix" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Ok("abc123")
+        assert_eq(try_resolve_id("abc"), expected)
+    }
+}
+
+test "try_resolve_id keeps a bare prefix that starts with br" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('brd261', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Ok("brd261")
+        assert_eq(try_resolve_id("brd"), expected)
+        assert_eq(try_resolve_id("br-brd"), expected)
+    }
+}
+
+test "try_resolve_id treats br- alone as no match" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Err("No task matches prefix: br-")
+        assert_eq(try_resolve_id("br-"), expected)
+    }
+}
+
+test "try_resolve_id shows the original text in a no-match error" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        let expected: Result[Str, Str] = Err("No task matches prefix: br-zzz")
+        assert_eq(try_resolve_id("br-zzz"), expected)
+    }
+}
+
+test "try_resolve_id shows the original text in an ambiguity error" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc123', 'One', 'open', 2)").unwrap()
+        db.exec("INSERT INTO tasks (id, title, status, priority) VALUES ('abc456', 'Two', 'open', 2)").unwrap()
+        let expected: Result[Str, Str] = Err("Ambiguous prefix 'br-abc', multiple matches")
+        assert_eq(try_resolve_id("br-abc"), expected)
+    }
+}
+
+test "try_resolve_project_id accepts the br- prefix in either case" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'webapp')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("br-p1a"), expected)
+        assert_eq(try_resolve_project_id("BR-P1A"), expected)
+        assert_eq(try_resolve_project_id("p1a"), expected)
+    }
+}
+
+test "try_resolve_project_id keeps a bare prefix that starts with br" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('brd261', 'webapp')").unwrap()
+        let expected: Result[Str, Str] = Ok("brd261")
+        assert_eq(try_resolve_project_id("brd"), expected)
+    }
+}
+
+test "try_resolve_project_id does not match every project on br- alone" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'webapp')").unwrap()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p2bbbb', 'api')").unwrap()
+        let expected: Result[Str, Str] = Err("No project matches: br-")
+        assert_eq(try_resolve_project_id("br-"), expected)
+    }
+}
+
+test "try_resolve_project_id resolves a project named br-foo by name" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'br-foo')").unwrap()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p2bbbb', 'other')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("br-foo"), expected)
+    }
+}
+
+test "try_resolve_project_id still resolves a br- project name when br- alone is stripped empty" {
+    with db.connect(":memory:").unwrap() {
+        setup_test_db()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p1aaaa', 'br-')").unwrap()
+        db.exec("INSERT INTO projects (id, name) VALUES ('p2bbbb', 'other')").unwrap()
+        let expected: Result[Str, Str] = Ok("p1aaaa")
+        assert_eq(try_resolve_project_id("br-"), expected)
+    }
+}

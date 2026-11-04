@@ -19,7 +19,7 @@ c) pick up "work to be done" without you have to copy/paste or reference a file.
 - **Dependencies**: tasks can have dependencies, so you can mark things to NOT be worked on until other work is completed
 - **Priority + tags** — organize however you want with tags. Set priorities. 
 - **Agent integration** — optional Claude Code plugin with slash commands (`/br:next`, `/br:plan`, `/br:add`)
-- **Fast CLI** — single binary, no runtime dependencies, prefix-matching IDs
+- **Fast CLI** — single binary, no runtime dependencies, prefix-matching IDs (`br-abc123`; `br-abc` or bare `abc` also work)
 
 ## Install
 

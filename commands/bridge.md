@@ -15,6 +15,7 @@ We track work in Bridge (`br`) — a global task manager. Run `br --help` to see
   - Tags use `namespace:value` convention (e.g., `repo:bridge`, `feature`, `bug`)
   - Use `-t tag` to filter by tag
   - Use `br show <id>` for task details
+  - IDs look like `br-abc123`. Input also takes a bare unique prefix (`abc`).
 
 ### Projects
 A project is a first-class tracker grouping a body of work — its own title, description, and status — orthogonal to tags (a task can belong to a project AND carry `repo:` tags). A task belongs to at most one project. Project status (`active`/`done`/`archived`) is manual; it never auto-closes from member tasks.

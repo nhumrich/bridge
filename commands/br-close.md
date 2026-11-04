@@ -4,7 +4,7 @@ description: Close (complete) a task in Bridge. The user's input after `/br:clos
 
 Close (complete) a task in Bridge. The user's input after `/br:close` identifies which task(s).
 
-If the input looks like an ID or prefix (short alphanumeric string), use it directly:
+If the input looks like an ID (`br-abc123`) or a bare ID prefix (`abc`), use it directly:
   `br done <id>`
 
 Multiple IDs can be closed in one call — `br done <id> [id...]` — this is best-effort: every id is attempted even if an earlier one fails, and the command exits 1 if any id failed.
