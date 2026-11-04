@@ -13,7 +13,7 @@ jobs:
       # Keep in sync with blink-version in blink.toml and the image tag in release.yml.
       image: ghcr.io/blinklang/blink:0.60.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check
         run: blink check src/main.bl

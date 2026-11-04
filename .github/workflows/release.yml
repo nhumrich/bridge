@@ -14,7 +14,7 @@ jobs:
     container:
       image: ghcr.io/blinklang/blink:0.60.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build binaries
         run: |
@@ -31,7 +31,7 @@ jobs:
           rm -rf br-*.units
           sha256sum br-* > checksums.txt
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/br-*
@@ -43,7 +43,7 @@ jobs:
     container:
       image: archlinux:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install tooling
         run: |
