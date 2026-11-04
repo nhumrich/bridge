@@ -1,6 +1,6 @@
 [package]
 name = "bridge"
-version = "0.13.0"
+version = "0.14.0"
 blink-version = "0.60.0"
 
 [native-dependencies]

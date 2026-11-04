@@ -1,6 +1,6 @@
 {
   "name": "bridge",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Bridge — global task manager for Claude Code. Dependency-aware DAG, persists across repos/sessions.",
   "skills": [
     {
